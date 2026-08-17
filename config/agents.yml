@@ -1,0 +1,21 @@
+# Reference configuration. Copy the settings you need to .lrai-agent.yml in a
+# consuming repository. Omitted settings use the defaults shown here.
+version: 1
+provider: codex
+
+# Omit plan.prompt to use the prompt shipped with this package. An explicit
+# prompt path is resolved relative to this file.
+# plan:
+#   prompt: /etc/lrai-agent/prompts/plan.md
+
+providers:
+  codex:
+    executable: codex
+    # model: gpt-5-codex
+
+  claude:
+    executable: claude
+    # model: sonnet
+
+# The plan command always enforces Codex's read-only/never controls or Claude's
+# plan permission mode. These are command invariants and are not configurable.

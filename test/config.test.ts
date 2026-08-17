@@ -1,0 +1,78 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { loadConfig, selectProvider } from "../src/config.js";
+
+describe("loadConfig", () => {
+  it("uses safe planning defaults when no repository config exists", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    const loaded = await loadConfig(directory, undefined);
+
+    expect(loaded.config.provider).toBe("codex");
+    expect(loaded.config.providers.codex.executable).toBe("codex");
+    expect(loaded.config.providers.claude.executable).toBe("claude");
+  });
+
+  it("merges repository overrides", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(
+      path.join(directory, ".lrai-agent.yml"),
+      "version: 1\nprovider: claude\nproviders:\n  claude:\n    model: sonnet\n",
+    );
+
+    const loaded = await loadConfig(directory, undefined);
+    expect(loaded.config.provider).toBe("claude");
+    expect(loaded.config.providers.claude.model).toBe("sonnet");
+    expect(loaded.config.providers.codex.executable).toBe("codex");
+  });
+
+  it("rejects an unknown provider", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(
+      path.join(directory, ".lrai-agent.yml"),
+      "version: 1\nprovider: other\n",
+    );
+
+    await expect(loadConfig(directory, undefined)).rejects.toThrow(
+      "provider must be one of",
+    );
+  });
+
+  it("does not let repository config replace worker executables", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(
+      path.join(directory, ".lrai-agent.yml"),
+      "version: 1\nproviders:\n  codex:\n    executable: ./from-repository\n",
+    );
+
+    await expect(loadConfig(directory, undefined)).rejects.toThrow(
+      "provider executables are worker settings",
+    );
+  });
+
+  it("allows an explicit worker config to select executable paths", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(
+      path.join(directory, "worker.yml"),
+      "version: 1\nproviders:\n  codex:\n    executable: /opt/lrai/bin/codex\n",
+    );
+
+    const loaded = await loadConfig(directory, "worker.yml");
+    expect(loaded.config.providers.codex.executable).toBe(
+      "/opt/lrai/bin/codex",
+    );
+  });
+});
+
+describe("selectProvider", () => {
+  it("accepts an explicit supported provider", () => {
+    expect(selectProvider("codex", "claude")).toBe("claude");
+  });
+
+  it("rejects unsupported providers", () => {
+    expect(() => selectProvider("codex", "other")).toThrow(
+      "provider must be codex or claude",
+    );
+  });
+});

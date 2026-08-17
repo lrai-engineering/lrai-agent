@@ -1,0 +1,37 @@
+{
+  "name": "@lrai-engineering/lrai-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Portable orchestration for LRAI coding agents",
+  "type": "module",
+  "bin": {
+    "lrai-agent": "dist/src/index.js"
+  },
+  "files": [
+    "dist/",
+    "prompts/",
+    "config/",
+    "scripts/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm test && npm run build",
+    "dev": "tsx src/index.ts",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
