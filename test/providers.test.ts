@@ -1,5 +1,8 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createInvocation } from "../src/providers.js";
+import { createInvocation, runInvocation } from "../src/providers.js";
 import type { AgentConfig, TaskContext } from "../src/types.js";
 
 const config: AgentConfig = {
@@ -93,5 +96,39 @@ describe("createInvocation", () => {
     expect(invocation.args).toContain("Read,Glob,Grep,Edit,Write");
     expect(invocation.args.join(" ")).not.toContain("Bash");
     expect(invocation.args.join(" ")).not.toContain("WebFetch");
+  });
+});
+
+describe("runInvocation", () => {
+  it("captures stdout and preserves the child exit code", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lrai-agent-provider-test-"));
+    const fakeExecutable = join(dir, "fake-provider.js");
+    // A local fixture standing in for a real provider CLI: it echoes stdin
+    // back to stdout, then exits with a distinctive non-zero code so the
+    // test can tell the exit code was preserved rather than defaulted.
+    await writeFile(
+      fakeExecutable,
+      [
+        "#!/usr/bin/env node",
+        'process.stdin.on("data", (chunk) => process.stdout.write(chunk));',
+        'process.stdin.on("end", () => process.exit(7));',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = await runInvocation({
+        executable: fakeExecutable,
+        args: [],
+        cwd: dir,
+        stdin: "captured provider output\n",
+      });
+
+      expect(result.stdout).toBe("captured provider output\n");
+      expect(result.exitCode).toBe(7);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
