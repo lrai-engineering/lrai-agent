@@ -1,4 +1,5 @@
 export type ProviderName = "codex" | "claude";
+export type AgentCommand = "plan" | "implement";
 
 export interface TaskContext {
   repository: string;
@@ -25,6 +26,9 @@ export interface AgentConfig {
   plan: {
     prompt: string;
   };
+  implement: {
+    prompt: string;
+  };
   providers: {
     codex: CodexConfig;
     claude: ClaudeConfig;
@@ -33,7 +37,7 @@ export interface AgentConfig {
 
 export interface LoadedConfig {
   config: AgentConfig;
-  configDirectory?: string;
+  promptDirectories?: Partial<Record<AgentCommand, string>>;
 }
 
 export interface Invocation {

@@ -27,6 +27,11 @@ Run the complete local check before committing:
 npm run check
 ```
 
-When CLI behavior changes, also exercise `lrai-agent plan --dry-run` with a
-representative task. Tests must cover argument construction and configuration
-defaults so provider upgrades do not accidentally widen permissions.
+When CLI behavior changes, exercise both `lrai-agent plan --dry-run` and
+`lrai-agent implement --dry-run` with a representative task. Tests must cover
+argument construction and configuration defaults so provider upgrades do not
+accidentally widen permissions.
+
+`implement` may edit only the checked-out workspace. Git operations, pull
+request publication, issue comments, CI feedback, and deployment remain owned
+by an authorized outer workflow; never add those as implicit CLI side effects.

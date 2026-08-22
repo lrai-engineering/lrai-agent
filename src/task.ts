@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { LoadedConfig, TaskContext } from "./types.js";
+import type { AgentCommand, LoadedConfig, TaskContext } from "./types.js";
 
 const TOKENS = [
   "repository",
@@ -41,18 +41,26 @@ function packageRoot(): string {
     : parentDirectory;
 }
 
-export async function loadPlanPrompt(
+export async function loadPrompt(
   loaded: LoadedConfig,
   task: TaskContext,
+  command: AgentCommand,
 ): Promise<string> {
-  const configuredPath = loaded.config.plan.prompt;
-  const baseDirectory = loaded.configDirectory ?? packageRoot();
+  const configuredPath = loaded.config[command].prompt;
+  const baseDirectory = loaded.promptDirectories?.[command] ?? packageRoot();
   const promptPath = path.resolve(baseDirectory, configuredPath);
 
   try {
     return renderPrompt(await readFile(promptPath, "utf8"), task);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`failed to load plan prompt ${promptPath}: ${message}`);
+    throw new Error(`failed to load ${command} prompt ${promptPath}: ${message}`);
   }
+}
+
+export async function loadPlanPrompt(
+  loaded: LoadedConfig,
+  task: TaskContext,
+): Promise<string> {
+  return await loadPrompt(loaded, task, "plan");
 }

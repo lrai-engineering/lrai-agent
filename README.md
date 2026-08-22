@@ -10,14 +10,14 @@ credentials.
 
 ## Status
 
-This repository is at the v0.1 foundation stage. The first command is a
-read-only planning command that can invoke either Codex or Claude Code:
+The CLI supports two deliberately separate commands with either Codex or
+Claude Code:
 
 ```text
 GitHub issue / local task
           |
           v
-    lrai-agent plan
+    lrai-agent plan / implement
           |
           +-- Codex CLI
           `-- Claude Code
@@ -51,6 +51,10 @@ REPOSITORY="lrai-engineering/example" \
 lrai-agent plan
 ```
 
+`plan` is read-only. `implement` may edit the checked-out workspace but cannot
+publish anything; the authorized GitHub workflow owns validation, git, issue
+comments, and draft pull-request creation.
+
 Only the worker needs this installation. Consuming repositories call the
 worker's command; they do not copy this source tree. Once a version tag exists,
 another worker can install that exact release directly from the private Git
@@ -58,7 +62,7 @@ repository:
 
 ```bash
 npm install --global \
-  'git+ssh://git@github.com/lrai-engineering/lrai-agent.git#v0.1.0'
+  'git+ssh://git@github.com/lrai-engineering/lrai-agent.git#v0.2.0'
 ```
 
 Use `--dry-run` to verify the selected provider and rendered prompt without
@@ -85,17 +89,29 @@ Configuration is discovered from `.lrai-agent.yml` in the target repository.
 Repository configuration can choose the provider, model, or a repository-owned
 prompt. Provider executable paths are worker policy and are only accepted from
 the explicit `LRAI_CONFIG` file. See
-[`config/agents.yml`](config/agents.yml) for all v0.1 worker settings.
+[`config/agents.yml`](config/agents.yml) for all v0.2 worker settings.
 
-## Thin GitHub Actions trigger
+## Phone-friendly GitHub issue workflow
 
-A consuming repository only needs to pass the task context to the installed
-CLI. [`templates/github/agent-plan.yml`](templates/github/agent-plan.yml) is a
-starting point for a self-hosted worker.
+A consuming repository can copy
+[`templates/github/agent-issue.yml`](templates/github/agent-issue.yml), replace
+the approved GitHub login, and customize its validation step. On an issue
+created by that owner, an exact comment starts the requested lane:
+
+- `/codex plan`
+- `/claude plan`
+- `/codex implement`
+- `/claude implement`
+
+Planning posts the result back to the issue. Implementation produces a bounded
+workspace patch, runs repository validation, and opens a draft pull request for
+manual review. It also retains a credential-free patch artifact for seven days.
+It does not merge or deploy. Draft-PR publication requires the repository's
+GitHub Actions setting that permits `GITHUB_TOKEN` to create pull requests.
 
 Keep authorization gates in the workflow. Issue titles and bodies are
-untrusted input, and a workflow must decide which actors and labels are allowed
-to start an agent before invoking this program.
+untrusted input, and a workflow must decide which actors and exact commands are
+allowed to start an agent before invoking this program.
 
 ## Ownership boundary
 
@@ -116,8 +132,8 @@ Machine or service state, never committed here:
 ## Roadmap
 
 - v0.1: provider-neutral planning invocation
-- v0.2: prompt and repository policy improvements
-- v0.3: implementation and review commands
+- v0.2: bounded planning and implementation commands
+- v0.3: review commands and richer repository policy
 - v0.4: isolated worktrees
 - v0.5: branch creation
 - v0.6: pull request publication

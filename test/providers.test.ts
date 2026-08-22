@@ -6,6 +6,7 @@ const config: AgentConfig = {
   version: 1,
   provider: "codex",
   plan: { prompt: "prompts/plan.md" },
+  implement: { prompt: "prompts/implement.md" },
   providers: {
     codex: {
       executable: "codex",
@@ -27,25 +28,70 @@ const task: TaskContext = {
 
 describe("createInvocation", () => {
   it("passes Codex arguments without a shell", () => {
-    const invocation = createInvocation("codex", config, task, "prompt");
+    const invocation = createInvocation(
+      "plan",
+      "codex",
+      config,
+      task,
+      "prompt",
+    );
 
     expect(invocation.executable).toBe("codex");
     expect(invocation.args).toContain("read-only");
+    expect(invocation.args).toContain("--ignore-user-config");
     expect(invocation.args).toContain("/tmp/repo with spaces");
     expect(invocation.args.at(-1)).toBe("-");
     expect(invocation.stdin).toBe("prompt");
   });
 
   it("uses Claude's plan permission mode", () => {
-    const invocation = createInvocation("claude", config, task, "prompt");
+    const invocation = createInvocation(
+      "plan",
+      "claude",
+      config,
+      task,
+      "prompt",
+    );
 
     expect(invocation.executable).toBe("claude");
     expect(invocation.args).toEqual([
       "--print",
       "--output-format",
       "text",
+      "--no-session-persistence",
+      "--safe-mode",
+      "--tools",
+      "Read,Glob,Grep",
       "--permission-mode",
       "plan",
     ]);
+  });
+
+  it("confines Codex implementation to workspace-write", () => {
+    const invocation = createInvocation(
+      "implement",
+      "codex",
+      config,
+      task,
+      "prompt",
+    );
+
+    expect(invocation.args).toContain("workspace-write");
+    expect(invocation.args).not.toContain("danger-full-access");
+  });
+
+  it("allows Claude file edits without Bash or network tools", () => {
+    const invocation = createInvocation(
+      "implement",
+      "claude",
+      config,
+      task,
+      "prompt",
+    );
+
+    expect(invocation.args).toContain("acceptEdits");
+    expect(invocation.args).toContain("Read,Glob,Grep,Edit,Write");
+    expect(invocation.args.join(" ")).not.toContain("Bash");
+    expect(invocation.args.join(" ")).not.toContain("WebFetch");
   });
 });

@@ -8,6 +8,11 @@ provider: codex
 # plan:
 #   prompt: /etc/lrai-agent/prompts/plan.md
 
+# Omit implement.prompt to use the bounded implementation prompt shipped with
+# this package. Implementation edits the checkout but never publishes changes.
+# implement:
+#   prompt: /etc/lrai-agent/prompts/implement.md
+
 providers:
   codex:
     executable: codex
@@ -17,5 +22,6 @@ providers:
     executable: claude
     # model: sonnet
 
-# The plan command always enforces Codex's read-only/never controls or Claude's
-# plan permission mode. These are command invariants and are not configurable.
+# The plan command is read-only. The implement command confines Codex to its
+# workspace-write sandbox and Claude to file tools without Bash or network
+# tools. These command policies are invariants and are not configurable.

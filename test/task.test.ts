@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { loadPlanPrompt, renderPrompt } from "../src/task.js";
+import { loadPlanPrompt, loadPrompt, renderPrompt } from "../src/task.js";
 
 describe("renderPrompt", () => {
   it("renders task fields as data", () => {
@@ -73,5 +73,29 @@ describe("renderPrompt", () => {
     });
 
     expect(prompt).toBe("Plan owner/repo: A title");
+  });
+
+  it("loads the packaged implementation prompt independently", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-prompt-"));
+    await writeFile(
+      path.join(directory, ".lrai-agent.yml"),
+      "version: 1\nplan:\n  prompt: custom-plan.md\n",
+    );
+    await writeFile(path.join(directory, "custom-plan.md"), "Custom plan");
+    const loaded = await loadConfig(directory, undefined);
+    const prompt = await loadPrompt(
+      loaded,
+      {
+        repository: "owner/repo",
+        sender: "luke",
+        title: "A title",
+        body: "A body",
+        workingDirectory: directory,
+      },
+      "implement",
+    );
+
+    expect(prompt).toContain("smallest coherent change");
+    expect(prompt).toContain("focused, uncommitted working-tree patch");
   });
 });

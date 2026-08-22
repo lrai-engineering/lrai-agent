@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type {
+  AgentCommand,
   AgentConfig,
   Invocation,
   ProviderName,
@@ -7,6 +8,7 @@ import type {
 } from "./types.js";
 
 export function createInvocation(
+  command: AgentCommand,
   provider: ProviderName,
   config: AgentConfig,
   task: TaskContext,
@@ -19,11 +21,11 @@ export function createInvocation(
       "--cd",
       task.workingDirectory,
       "--sandbox",
-      "read-only",
-      "--ask-for-approval",
-      "never",
+      command === "plan" ? "read-only" : "workspace-write",
       "--color",
       "never",
+      "--ephemeral",
+      "--ignore-user-config",
     ];
     if (providerConfig.model !== undefined) {
       args.push("--model", providerConfig.model);
@@ -42,8 +44,12 @@ export function createInvocation(
     "--print",
     "--output-format",
     "text",
+    "--no-session-persistence",
+    "--safe-mode",
+    "--tools",
+    command === "plan" ? "Read,Glob,Grep" : "Read,Glob,Grep,Edit,Write",
     "--permission-mode",
-    "plan",
+    command === "plan" ? "plan" : "acceptEdits",
   ];
   if (providerConfig.model !== undefined) {
     args.push("--model", providerConfig.model);
@@ -56,12 +62,25 @@ export function createInvocation(
   };
 }
 
-export async function runInvocation(invocation: Invocation): Promise<number> {
+export interface InvocationResult {
+  exitCode: number;
+  stdout: string;
+}
+
+export async function runInvocation(
+  invocation: Invocation,
+): Promise<InvocationResult> {
   return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
       env: process.env,
-      stdio: ["pipe", "inherit", "inherit"],
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      process.stdout.write(chunk);
     });
 
     child.once("error", (error) => {
@@ -76,7 +95,7 @@ export async function runInvocation(invocation: Invocation): Promise<number> {
         );
         return;
       }
-      resolve(code ?? 1);
+      resolve({ exitCode: code ?? 1, stdout: Buffer.concat(chunks).toString() });
     });
 
     child.stdin.end(invocation.stdin);

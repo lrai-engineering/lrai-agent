@@ -1,0 +1,202 @@
+name: LRAI issue agent
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: lrai-agent-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: >-
+      github.actor == 'lukasijus' &&
+      github.event.issue.user.login == 'lukasijus' &&
+      !github.event.issue.pull_request &&
+      (github.event.comment.body == '/codex plan' ||
+      github.event.comment.body == '/claude plan')
+    runs-on: [self-hosted, Linux, ARM64]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Select provider
+        id: agent
+        env:
+          AGENT_COMMAND: ${{ github.event.comment.body }}
+        run: |
+          case "$AGENT_COMMAND" in
+            "/codex plan") provider=codex ;;
+            "/claude plan") provider=claude ;;
+            *) exit 1 ;;
+          esac
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
+
+      - name: Acknowledge request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PROVIDER: ${{ steps.agent.outputs.provider }}
+        run: >-
+          gh issue comment "$ISSUE_NUMBER" --body
+          "Started a read-only $PROVIDER planning run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Generate plan
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          REPOSITORY: ${{ github.repository }}
+          SENDER: ${{ github.actor }}
+          PROVIDER: ${{ steps.agent.outputs.provider }}
+        run: >-
+          lrai-agent plan --provider "$PROVIDER"
+          --output "$RUNNER_TEMP/lrai-agent-output.md"
+
+      - name: Post plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PROVIDER: ${{ steps.agent.outputs.provider }}
+          OUTPUT_PATH: ${{ runner.temp }}/lrai-agent-output.md
+          COMMENT_PATH: ${{ runner.temp }}/lrai-agent-comment.md
+        run: |
+          node -e 'const fs=require("fs"); const text=fs.readFileSync(process.env.OUTPUT_PATH,"utf8"); const body=`## ${process.env.PROVIDER} plan\n\n${text}`; fs.writeFileSync(process.env.COMMENT_PATH,body.slice(0,64000));'
+          gh issue comment "$ISSUE_NUMBER" --body-file "$COMMENT_PATH"
+
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: >-
+          gh issue comment "$ISSUE_NUMBER" --body
+          "The planning run failed. Review $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."
+
+  implement:
+    if: >-
+      github.actor == 'lukasijus' &&
+      github.event.issue.user.login == 'lukasijus' &&
+      !github.event.issue.pull_request &&
+      (github.event.comment.body == '/codex implement' ||
+      github.event.comment.body == '/claude implement')
+    runs-on: [self-hosted, Linux, ARM64]
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select provider and record base
+        id: agent
+        env:
+          AGENT_COMMAND: ${{ github.event.comment.body }}
+        run: |
+          case "$AGENT_COMMAND" in
+            "/codex implement") provider=codex ;;
+            "/claude implement") provider=claude ;;
+            *) exit 1 ;;
+          esac
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Acknowledge request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PROVIDER: ${{ steps.agent.outputs.provider }}
+        run: >-
+          gh issue comment "$ISSUE_NUMBER" --body
+          "Started a bounded $PROVIDER implementation run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Implement issue
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          REPOSITORY: ${{ github.repository }}
+          SENDER: ${{ github.actor }}
+          PROVIDER: ${{ steps.agent.outputs.provider }}
+        run: >-
+          lrai-agent implement --provider "$PROVIDER"
+          --output "$RUNNER_TEMP/lrai-agent-output.md"
+
+      - name: Enforce workflow boundary
+        env:
+          BASE_SHA: ${{ steps.agent.outputs.base_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          test -n "$(git status --porcelain)"
+          protected_changes=$(git status --porcelain -- \
+            .github/workflows \
+            .github/actions \
+            .lrai-agent.yml \
+            AGENTS.md \
+            CLAUDE.md)
+          if test -n "$protected_changes"; then
+            echo "Agent modified protected orchestration files:" >&2
+            echo "$protected_changes" >&2
+            exit 1
+          fi
+
+      - name: Validate changes
+        run: |
+          npm ci
+          npm run check
+
+      - name: Prepare credential-free patch
+        run: |
+          git add --all
+          ! git diff --cached --quiet
+          git diff --cached --binary > "$RUNNER_TEMP/lrai-agent.patch"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue-${{ github.event.issue.number }}-${{ steps.agent.outputs.provider }}-patch
+          path: ${{ runner.temp }}/lrai-agent.patch
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish draft pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          PROVIDER: ${{ steps.agent.outputs.provider }}
+        run: |
+          branch="agent/issue-$ISSUE_NUMBER-$GITHUB_RUN_ID"
+          git switch -c "$branch"
+          git config user.name "lrai-engineering-agent[bot]"
+          git config user.email "lrai-engineering-agent[bot]@users.noreply.github.com"
+          git -c core.hooksPath=/dev/null commit -m "issue #$ISSUE_NUMBER: agent implementation"
+
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $auth"
+          trap 'git config --local --unset-all http.https://github.com/.extraheader || true' EXIT
+          git -c core.hooksPath=/dev/null push --set-upstream origin "$branch"
+
+          body=$(printf 'Closes #%s\n\nImplemented by %s through the bounded LRAI issue workflow. Review and merge this draft PR manually.' "$ISSUE_NUMBER" "$PROVIDER")
+          pr_url=$(gh pr create --draft --base "${{ github.event.repository.default_branch }}" --head "$branch" --title "$ISSUE_TITLE" --body "$body")
+          gh issue comment "$ISSUE_NUMBER" --body "Draft implementation PR: $pr_url"
+
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: >-
+          gh issue comment "$ISSUE_NUMBER" --body
+          "The implementation run failed before producing a draft PR. A validated patch artifact may still be available at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."

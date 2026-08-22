@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 
 import { parseArgs } from "node:util";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { loadConfig, selectProvider } from "./config.js";
 import { taskFromEnvironment } from "./github.js";
 import { createInvocation, runInvocation } from "./providers.js";
-import { loadPlanPrompt } from "./task.js";
+import { loadPrompt } from "./task.js";
+import type { AgentCommand } from "./types.js";
 
-const HELP = `lrai-agent v0.1
+const HELP = `lrai-agent v0.2
 
 Usage:
   lrai-agent plan [options]
+  lrai-agent implement [options]
 
 Options:
   --provider <codex|claude>  Override the configured provider
@@ -20,6 +24,7 @@ Options:
   --sender <login>           Requesting actor (or SENDER/GITHUB_ACTOR)
   --cwd <path>               Repository checkout (or GITHUB_WORKSPACE/current dir)
   --config <path>            Configuration file (or LRAI_CONFIG)
+  --output <path>            Write the provider's final output to a file
   --dry-run                  Print the invocation and prompt without running it
   -h, --help                 Show this help
 `;
@@ -36,7 +41,7 @@ async function main(): Promise<number> {
     process.stdout.write(HELP);
     return 0;
   }
-  if (command !== "plan") {
+  if (command !== "plan" && command !== "implement") {
     throw new Error(`unknown command: ${command}\n\n${HELP}`);
   }
 
@@ -52,6 +57,7 @@ async function main(): Promise<number> {
       sender: { type: "string" },
       cwd: { type: "string" },
       config: { type: "string" },
+      output: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -75,8 +81,15 @@ async function main(): Promise<number> {
   });
   const loaded = await loadConfig(task.workingDirectory, values.config);
   const provider = selectProvider(loaded.config.provider, values.provider);
-  const prompt = await loadPlanPrompt(loaded, task);
-  const invocation = createInvocation(provider, loaded.config, task, prompt);
+  const agentCommand: AgentCommand = command;
+  const prompt = await loadPrompt(loaded, task, agentCommand);
+  const invocation = createInvocation(
+    agentCommand,
+    provider,
+    loaded.config,
+    task,
+    prompt,
+  );
 
   if (values["dry-run"]) {
     process.stdout.write(
@@ -86,9 +99,14 @@ async function main(): Promise<number> {
   }
 
   process.stderr.write(
-    `LRAI Agent: planning ${task.repository}${task.issueNumber === undefined ? "" : `#${task.issueNumber}`} with ${provider}\n`,
+    `LRAI Agent: ${agentCommand} ${task.repository}${task.issueNumber === undefined ? "" : `#${task.issueNumber}`} with ${provider}\n`,
   );
-  return await runInvocation(invocation);
+  const result = await runInvocation(invocation);
+  if (values.output !== undefined) {
+    const outputPath = path.resolve(task.workingDirectory, values.output);
+    await writeFile(outputPath, result.stdout, { mode: 0o600 });
+  }
+  return result.exitCode;
 }
 
 main()

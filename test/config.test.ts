@@ -10,6 +10,7 @@ describe("loadConfig", () => {
     const loaded = await loadConfig(directory, undefined);
 
     expect(loaded.config.provider).toBe("codex");
+    expect(loaded.config.implement.prompt).toBe("prompts/implement.md");
     expect(loaded.config.providers.codex.executable).toBe("codex");
     expect(loaded.config.providers.claude.executable).toBe("claude");
   });
@@ -62,6 +63,18 @@ describe("loadConfig", () => {
     expect(loaded.config.providers.codex.executable).toBe(
       "/opt/lrai/bin/codex",
     );
+  });
+
+  it("tracks custom prompt origins independently", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(
+      path.join(directory, ".lrai-agent.yml"),
+      "version: 1\nplan:\n  prompt: custom-plan.md\n",
+    );
+
+    const loaded = await loadConfig(directory, undefined);
+    expect(loaded.promptDirectories?.plan).toBe(directory);
+    expect(loaded.promptDirectories?.implement).toBeUndefined();
   });
 });
 

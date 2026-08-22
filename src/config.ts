@@ -7,6 +7,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   version: 1,
   provider: "codex",
   plan: { prompt: "prompts/plan.md" },
+  implement: { prompt: "prompts/implement.md" },
   providers: {
     codex: {
       executable: "codex",
@@ -56,16 +57,23 @@ function enumValue<T extends string>(
 
 function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfig {
   if (!isRecord(raw)) throw new Error("configuration must be a YAML object");
-  assertKnownKeys(raw, ["version", "provider", "plan", "providers"], "config");
+  assertKnownKeys(
+    raw,
+    ["version", "provider", "plan", "implement", "providers"],
+    "config",
+  );
   if (raw.version !== undefined && raw.version !== 1) {
     throw new Error("configuration version must be 1");
   }
 
   const plan = raw.plan === undefined ? {} : raw.plan;
+  const implement = raw.implement === undefined ? {} : raw.implement;
   const providers = raw.providers === undefined ? {} : raw.providers;
   if (!isRecord(plan)) throw new Error("plan must be an object");
+  if (!isRecord(implement)) throw new Error("implement must be an object");
   if (!isRecord(providers)) throw new Error("providers must be an object");
   assertKnownKeys(plan, ["prompt"], "plan");
+  assertKnownKeys(implement, ["prompt"], "implement");
   assertKnownKeys(providers, ["codex", "claude"], "providers");
 
   const codex = providers.codex === undefined ? {} : providers.codex;
@@ -98,6 +106,11 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
       prompt:
         optionalString(plan.prompt, "plan.prompt") ?? DEFAULT_CONFIG.plan.prompt,
     },
+    implement: {
+      prompt:
+        optionalString(implement.prompt, "implement.prompt") ??
+        DEFAULT_CONFIG.implement.prompt,
+    },
     providers: {
       codex: {
         executable:
@@ -126,15 +139,23 @@ export async function loadConfig(
   try {
     const contents = await readFile(configPath, "utf8");
     const raw = parse(contents);
-    const hasRepositoryPrompt =
-      isRecord(raw) &&
-      isRecord(raw.plan) &&
-      typeof raw.plan.prompt === "string";
+    const configDirectory = path.dirname(configPath);
+    const promptDirectories = isRecord(raw)
+      ? {
+          ...(isRecord(raw.plan) && typeof raw.plan.prompt === "string"
+            ? { plan: configDirectory }
+            : {}),
+          ...(isRecord(raw.implement) &&
+          typeof raw.implement.prompt === "string"
+            ? { implement: configDirectory }
+            : {}),
+        }
+      : {};
     return {
       config: mergeConfig(raw, explicitPath !== undefined),
-      ...(hasRepositoryPrompt
-        ? { configDirectory: path.dirname(configPath) }
-        : {}),
+      ...(Object.keys(promptDirectories).length === 0
+        ? {}
+        : { promptDirectories }),
     };
   } catch (error) {
     if (
