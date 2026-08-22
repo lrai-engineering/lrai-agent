@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 import type {
   AgentCommand,
   AgentConfig,
@@ -29,6 +30,14 @@ export function createInvocation(
     ];
     if (providerConfig.model !== undefined) {
       args.push("--model", providerConfig.model);
+    }
+    for (const attachment of task.attachments ?? []) {
+      if (attachment.kind === "image") {
+        args.push(
+          "--image",
+          path.resolve(task.workingDirectory, attachment.path),
+        );
+      }
     }
     args.push("-");
     return {

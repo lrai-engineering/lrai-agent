@@ -1,8 +1,8 @@
 name: LRAI issue agent
 
 on:
-  issue_comment:
-    types: [created]
+  issues:
+    types: [opened, labeled]
 
 concurrency:
   group: lrai-agent-issue-${{ github.event.issue.number }}
@@ -13,9 +13,17 @@ jobs:
     if: >-
       github.actor == 'lukasijus' &&
       github.event.issue.user.login == 'lukasijus' &&
-      !github.event.issue.pull_request &&
-      (github.event.comment.body == '/codex plan' ||
-      github.event.comment.body == '/claude plan')
+      (github.event.action == 'opened' ||
+      github.event.label.name == 'codex-plan' ||
+      github.event.label.name == 'claude-plan') &&
+      ((contains(github.event.issue.labels.*.name, 'codex-plan') &&
+      !contains(github.event.issue.labels.*.name, 'claude-plan') &&
+      !contains(github.event.issue.labels.*.name, 'codex') &&
+      !contains(github.event.issue.labels.*.name, 'claude')) ||
+      (contains(github.event.issue.labels.*.name, 'claude-plan') &&
+      !contains(github.event.issue.labels.*.name, 'codex-plan') &&
+      !contains(github.event.issue.labels.*.name, 'codex') &&
+      !contains(github.event.issue.labels.*.name, 'claude')))
     runs-on: [self-hosted, Linux, ARM64]
     timeout-minutes: 30
     permissions:
@@ -30,16 +38,28 @@ jobs:
       - name: Select provider
         id: agent
         env:
-          AGENT_COMMAND: ${{ github.event.comment.body }}
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
         run: |
-          case "$AGENT_COMMAND" in
-            "/codex plan") provider=codex ;;
-            "/claude plan") provider=claude ;;
-            *) exit 1 ;;
-          esac
+          if [[ "$LABELS" == *'"codex-plan"'* ]]; then
+            provider=codex
+            trigger_label=codex-plan
+          else
+            provider=claude
+            trigger_label=claude-plan
+          fi
+          live_labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name')
+          if ! grep -Fxq -- "$trigger_label" <<< "$live_labels"; then
+            echo "active=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh issue edit "$ISSUE_NUMBER" --remove-label "$trigger_label"
+          echo "active=true" >> "$GITHUB_OUTPUT"
           echo "provider=$provider" >> "$GITHUB_OUTPUT"
 
       - name: Acknowledge request
+        if: steps.agent.outputs.active == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -48,7 +68,17 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --body
           "Started a read-only $PROVIDER planning run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
+      - name: Download issue attachments
+        if: steps.agent.outputs.active == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: >-
+          lrai-agent fetch-attachments
+          --output "$GITHUB_WORKSPACE/.lrai-agent-attachments/manifest.json"
+
       - name: Generate plan
+        if: steps.agent.outputs.active == 'true'
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
@@ -58,9 +88,15 @@ jobs:
           PROVIDER: ${{ steps.agent.outputs.provider }}
         run: >-
           lrai-agent plan --provider "$PROVIDER"
+          --attachments "$GITHUB_WORKSPACE/.lrai-agent-attachments/manifest.json"
           --output "$RUNNER_TEMP/lrai-agent-output.md"
 
+      - name: Remove issue attachments
+        if: always() && steps.agent.outputs.active == 'true'
+        run: rm -rf -- "$GITHUB_WORKSPACE/.lrai-agent-attachments"
+
       - name: Post plan
+        if: steps.agent.outputs.active == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -68,11 +104,13 @@ jobs:
           OUTPUT_PATH: ${{ runner.temp }}/lrai-agent-output.md
           COMMENT_PATH: ${{ runner.temp }}/lrai-agent-comment.md
         run: |
+          # JavaScript template literals expand in Node, not the shell.
+          # shellcheck disable=SC2016
           node -e 'const fs=require("fs"); const text=fs.readFileSync(process.env.OUTPUT_PATH,"utf8"); const body=`## ${process.env.PROVIDER} plan\n\n${text}`; fs.writeFileSync(process.env.COMMENT_PATH,body.slice(0,64000));'
           gh issue comment "$ISSUE_NUMBER" --body-file "$COMMENT_PATH"
 
       - name: Report failure
-        if: failure()
+        if: failure() && steps.agent.outputs.active == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -84,9 +122,17 @@ jobs:
     if: >-
       github.actor == 'lukasijus' &&
       github.event.issue.user.login == 'lukasijus' &&
-      !github.event.issue.pull_request &&
-      (github.event.comment.body == '/codex implement' ||
-      github.event.comment.body == '/claude implement')
+      (github.event.action == 'opened' ||
+      github.event.label.name == 'codex' ||
+      github.event.label.name == 'claude') &&
+      ((contains(github.event.issue.labels.*.name, 'codex') &&
+      !contains(github.event.issue.labels.*.name, 'claude') &&
+      !contains(github.event.issue.labels.*.name, 'codex-plan') &&
+      !contains(github.event.issue.labels.*.name, 'claude-plan')) ||
+      (contains(github.event.issue.labels.*.name, 'claude') &&
+      !contains(github.event.issue.labels.*.name, 'codex') &&
+      !contains(github.event.issue.labels.*.name, 'codex-plan') &&
+      !contains(github.event.issue.labels.*.name, 'claude-plan')))
     runs-on: [self-hosted, Linux, ARM64]
     timeout-minutes: 90
     permissions:
@@ -103,17 +149,31 @@ jobs:
       - name: Select provider and record base
         id: agent
         env:
-          AGENT_COMMAND: ${{ github.event.comment.body }}
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
         run: |
-          case "$AGENT_COMMAND" in
-            "/codex implement") provider=codex ;;
-            "/claude implement") provider=claude ;;
-            *) exit 1 ;;
-          esac
-          echo "provider=$provider" >> "$GITHUB_OUTPUT"
-          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ "$LABELS" == *'"codex"'* ]]; then
+            provider=codex
+            trigger_label=codex
+          else
+            provider=claude
+            trigger_label=claude
+          fi
+          live_labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name')
+          if ! grep -Fxq -- "$trigger_label" <<< "$live_labels"; then
+            echo "active=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh issue edit "$ISSUE_NUMBER" --remove-label "$trigger_label"
+          {
+            echo "active=true"
+            echo "provider=$provider"
+            echo "base_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Acknowledge request
+        if: steps.agent.outputs.active == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -122,7 +182,17 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --body
           "Started a bounded $PROVIDER implementation run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
+      - name: Download issue attachments
+        if: steps.agent.outputs.active == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: >-
+          lrai-agent fetch-attachments
+          --output "$GITHUB_WORKSPACE/.lrai-agent-attachments/manifest.json"
+
       - name: Implement issue
+        if: steps.agent.outputs.active == 'true'
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
@@ -132,9 +202,15 @@ jobs:
           PROVIDER: ${{ steps.agent.outputs.provider }}
         run: >-
           lrai-agent implement --provider "$PROVIDER"
+          --attachments "$GITHUB_WORKSPACE/.lrai-agent-attachments/manifest.json"
           --output "$RUNNER_TEMP/lrai-agent-output.md"
 
+      - name: Remove issue attachments
+        if: always() && steps.agent.outputs.active == 'true'
+        run: rm -rf -- "$GITHUB_WORKSPACE/.lrai-agent-attachments"
+
       - name: Enforce workflow boundary
+        if: steps.agent.outputs.active == 'true'
         env:
           BASE_SHA: ${{ steps.agent.outputs.base_sha }}
         run: |
@@ -153,17 +229,23 @@ jobs:
           fi
 
       - name: Validate changes
+        if: steps.agent.outputs.active == 'true'
         run: |
           npm ci
           npm run check
 
       - name: Prepare credential-free patch
+        if: steps.agent.outputs.active == 'true'
         run: |
           git add --all
-          ! git diff --cached --quiet
+          if git diff --cached --quiet; then
+            echo "Agent produced no implementation changes." >&2
+            exit 1
+          fi
           git diff --cached --binary > "$RUNNER_TEMP/lrai-agent.patch"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.agent.outputs.active == 'true'
         with:
           name: issue-${{ github.event.issue.number }}-${{ steps.agent.outputs.provider }}-patch
           path: ${{ runner.temp }}/lrai-agent.patch
@@ -171,6 +253,7 @@ jobs:
           retention-days: 7
 
       - name: Publish draft pull request
+        if: steps.agent.outputs.active == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -193,7 +276,7 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --body "Draft implementation PR: $pr_url"
 
       - name: Report failure
-        if: failure()
+        if: failure() && steps.agent.outputs.active == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}

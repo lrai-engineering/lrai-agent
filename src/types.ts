@@ -1,6 +1,14 @@
 export type ProviderName = "codex" | "claude";
 export type AgentCommand = "plan" | "implement";
 
+export interface TaskAttachment {
+  sourceUrl: string;
+  path: string;
+  mediaType: string;
+  size: number;
+  kind: "image" | "text" | "pdf";
+}
+
 export interface TaskContext {
   repository: string;
   issueNumber?: string;
@@ -8,6 +16,7 @@ export interface TaskContext {
   body: string;
   sender: string;
   workingDirectory: string;
+  attachments?: TaskAttachment[];
 }
 
 export interface CodexConfig {

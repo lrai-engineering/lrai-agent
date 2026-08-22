@@ -95,13 +95,17 @@ the explicit `LRAI_CONFIG` file. See
 
 A consuming repository can copy
 [`templates/github/agent-issue.yml`](templates/github/agent-issue.yml), replace
-the approved GitHub login, and customize its validation step. On an issue
-created by that owner, an exact comment starts the requested lane:
+the approved GitHub login, and customize its validation step. Create the issue
+with exactly one automation label, or add exactly one afterward:
 
-- `/codex plan`
-- `/claude plan`
-- `/codex implement`
-- `/claude implement`
+- `codex` or `claude`: implement the issue
+- `codex-plan` or `claude-plan`: produce a read-only plan
+
+The workflow removes the automation label when it claims the run; add it again
+to rerun. Adding unrelated labels does not retrigger the agent, and issues with
+more than one automation label do not run until the labels are made
+unambiguous. Consuming the label also prevents a create-with-label event pair
+from starting duplicate work.
 
 Planning posts the result back to the issue. Implementation produces a bounded
 workspace patch, runs repository validation, and opens a draft pull request for
@@ -109,8 +113,17 @@ manual review. It also retains a credential-free patch artifact for seven days.
 It does not merge or deploy. Draft-PR publication requires the repository's
 GitHub Actions setting that permits `GITHUB_TOKEN` to create pull requests.
 
-Keep authorization gates in the workflow. Issue titles and bodies are
-untrusted input, and a workflow must decide which actors and exact commands are
+GitHub-hosted images, PDFs, text, source, and data files linked in the issue
+body are downloaded into a temporary workspace directory. Downloads are
+restricted to GitHub attachment hosts, at most eight files, 10 MiB per file,
+and 30 MiB total. Codex receives images through its image-input flag; both
+providers receive the attachment paths as untrusted task context. The temporary
+directory is removed before validation, patch creation, or publication. An
+unsupported or inaccessible attachment fails the run instead of silently
+discarding context.
+
+Keep authorization gates in the workflow. Issue titles, bodies, and attachments
+are untrusted input, and a workflow must decide which actors and labels are
 allowed to start an agent before invoking this program.
 
 ## Ownership boundary

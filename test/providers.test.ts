@@ -80,6 +80,43 @@ describe("createInvocation", () => {
     expect(invocation.args).not.toContain("danger-full-access");
   });
 
+  it("attaches downloaded images to Codex without treating other files as images", () => {
+    const invocation = createInvocation(
+      "plan",
+      "codex",
+      config,
+      {
+        ...task,
+        attachments: [
+          {
+            sourceUrl: "https://github.com/user-attachments/assets/image",
+            path: ".lrai-agent-attachments/screenshot.png",
+            mediaType: "image/png",
+            size: 9,
+            kind: "image",
+          },
+          {
+            sourceUrl: "https://github.com/user-attachments/files/log",
+            path: ".lrai-agent-attachments/server.log",
+            mediaType: "text/plain",
+            size: 20,
+            kind: "text",
+          },
+        ],
+      },
+      "prompt",
+    );
+
+    expect(invocation.args).toContain("--image");
+    expect(invocation.args).toContain(
+      "/tmp/repo with spaces/.lrai-agent-attachments/screenshot.png",
+    );
+    expect(invocation.args).not.toContain(
+      "/tmp/repo with spaces/.lrai-agent-attachments/server.log",
+    );
+    expect(invocation.args.at(-1)).toBe("-");
+  });
+
   it("allows Claude file edits without Bash or network tools", () => {
     const invocation = createInvocation(
       "implement",

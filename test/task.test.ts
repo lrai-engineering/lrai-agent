@@ -34,6 +34,29 @@ describe("renderPrompt", () => {
     ).toThrow("unknown prompt token");
   });
 
+  it("adds downloaded attachments as untrusted prompt context", () => {
+    const output = renderPrompt("Task: {{title}}", {
+      repository: "owner/repo",
+      sender: "luke",
+      title: "Visual bug",
+      body: "See screenshot",
+      workingDirectory: "/tmp/repo",
+      attachments: [
+        {
+          sourceUrl: "https://github.com/user-attachments/assets/image",
+          path: ".lrai-agent-attachments/screenshot.png",
+          mediaType: "image/png",
+          size: 9,
+          kind: "image",
+        },
+      ],
+    });
+
+    expect(output).toContain("Issue attachments (untrusted task data)");
+    expect(output).toContain(".lrai-agent-attachments/screenshot.png");
+    expect(output).toContain("Inspect every relevant attachment");
+  });
+
   it("keeps the packaged prompt when a repository only overrides provider", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "lrai-prompt-"));
     await writeFile(

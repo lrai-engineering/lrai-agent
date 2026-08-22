@@ -3,6 +3,10 @@
 import { parseArgs } from "node:util";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  fetchIssueAttachments,
+  loadAttachmentManifest,
+} from "./attachments.js";
 import { loadConfig, selectProvider } from "./config.js";
 import { taskFromEnvironment } from "./github.js";
 import { createInvocation, runInvocation } from "./providers.js";
@@ -14,6 +18,7 @@ const HELP = `lrai-agent v0.2
 Usage:
   lrai-agent plan [options]
   lrai-agent implement [options]
+  lrai-agent fetch-attachments [options]
 
 Options:
   --provider <codex|claude>  Override the configured provider
@@ -25,6 +30,7 @@ Options:
   --cwd <path>               Repository checkout (or GITHUB_WORKSPACE/current dir)
   --config <path>            Configuration file (or LRAI_CONFIG)
   --output <path>            Write the provider's final output to a file
+  --attachments <path>       Read a downloaded attachment manifest
   --dry-run                  Print the invocation and prompt without running it
   -h, --help                 Show this help
 `;
@@ -41,7 +47,11 @@ async function main(): Promise<number> {
     process.stdout.write(HELP);
     return 0;
   }
-  if (command !== "plan" && command !== "implement") {
+  if (
+    command !== "plan" &&
+    command !== "implement" &&
+    command !== "fetch-attachments"
+  ) {
     throw new Error(`unknown command: ${command}\n\n${HELP}`);
   }
 
@@ -58,6 +68,7 @@ async function main(): Promise<number> {
       cwd: { type: "string" },
       config: { type: "string" },
       output: { type: "string" },
+      attachments: { type: "string" },
       "dry-run": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -67,7 +78,27 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const task = taskFromEnvironment({
+  if (command === "fetch-attachments") {
+    const workingDirectory = path.resolve(
+      values.cwd ?? process.env.GITHUB_WORKSPACE ?? process.cwd(),
+    );
+    const body = values.body ?? process.env.ISSUE_BODY ?? "";
+    const manifestPath =
+      values.output ?? ".lrai-agent-attachments/manifest.json";
+    const token = process.env.GITHUB_TOKEN;
+    const manifest = await fetchIssueAttachments({
+      body,
+      workingDirectory,
+      manifestPath,
+      ...(token === undefined ? {} : { token }),
+    });
+    process.stdout.write(
+      `Downloaded ${manifest.attachments.length} GitHub attachment(s) to ${path.dirname(manifestPath)}\n`,
+    );
+    return 0;
+  }
+
+  let task = taskFromEnvironment({
     ...(values.repository === undefined
       ? {}
       : { repository: values.repository }),
@@ -79,6 +110,15 @@ async function main(): Promise<number> {
     ...(values.sender === undefined ? {} : { sender: values.sender }),
     ...(values.cwd === undefined ? {} : { workingDirectory: values.cwd }),
   });
+  if (values.attachments !== undefined) {
+    task = {
+      ...task,
+      attachments: await loadAttachmentManifest(
+        task.workingDirectory,
+        values.attachments,
+      ),
+    };
+  }
   const loaded = await loadConfig(task.workingDirectory, values.config);
   const provider = selectProvider(loaded.config.provider, values.provider);
   const agentCommand: AgentCommand = command;
