@@ -8,6 +8,13 @@ provider selection, and (over time) validation and delivery workflows. It does
 not own the GitHub Actions runner installation and it does not store machine
 credentials.
 
+## Documentation
+
+Start with the [LRAI Agent wiki](https://github.com/lrai-engineering/lrai-agent/wiki)
+for architecture diagrams, prerequisites, GitHub App and VM setup, command
+configuration, preview deployment, updates, and adding new issue labels.
+The reviewable [wiki source](docs/wiki/Home.md) is maintained with this codebase.
+
 ## Status
 
 The CLI supports two deliberately separate commands with either Codex or

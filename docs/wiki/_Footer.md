@@ -1,0 +1,1 @@
+LRAI Agent · [Source repository](https://github.com/lrai-engineering/lrai-agent) · Documentation baseline: [0908cb5](https://github.com/lrai-engineering/lrai-agent/tree/0908cb5308a8a967579320b64d5fafc0d0d123c9), 2026-09-07. Host installation and source publication are separate operations.

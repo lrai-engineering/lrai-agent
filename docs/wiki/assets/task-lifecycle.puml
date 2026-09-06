@@ -1,0 +1,44 @@
+@startuml
+title Issue command to result
+skinparam shadowing false
+actor User
+participant GitHub
+participant Receiver
+database Spool
+participant Worker
+participant Provider
+participant Deployer
+User -> GitHub : Apply recognized label
+GitHub -> Receiver : Signed event + delivery ID
+Receiver -> Receiver : Verify signature, sender, command
+Receiver -> Spool : Write delivery.json
+Receiver --> GitHub : 202 queued
+Worker -> Spool : Rename to .json.processing
+Worker -> GitHub : Request installation token
+Worker -> GitHub : Consume recorded labels
+Worker -> Worker : Clone temporary workspace\nLoad default-branch config
+Worker -> GitHub : Started comment
+alt plan / implement
+  Worker -> Provider : Prompt through stdin
+  Provider --> Worker : Output + exit code
+  alt implementation
+    Worker -> GitHub : Push new agent branch\nCreate draft PR
+  else plan
+    Worker -> GitHub : Post plan
+  end
+else deploy-only
+  Worker -> GitHub : Read linked open PR\nRead current head SHA
+end
+opt preview requested
+  Worker -> GitHub : Read live issue/PR discussion
+  Worker -> Deployer : Ref + SHA + content fingerprint
+  Deployer --> Worker : deployed / unchanged + URL
+  Worker -> GitHub : Preview result comment
+end
+Worker -> Worker : Clean temporary workspace
+Worker -> Spool : Archive done / failed
+note over Worker
+Individual task errors are logged;
+the daemon continues with other tasks.
+end note
+@enduml

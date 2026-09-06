@@ -1,0 +1,36 @@
+@startuml
+title Preview reuse and deployment
+skinparam shadowing false
+start
+:Read linked open agent PR and current SHA;
+:Hash live issue/PR text and human discussion;
+:Lock deployment and inspect existing preview;
+if (Identity, SHA and saved context match?) then (yes)
+  if (Container and both URLs healthy?) then (yes)
+    :Return unchanged + URL;
+    stop
+  else (no)
+  endif
+else (no)
+endif
+:Clone requested ref and verify exact SHA;
+if (Ref still matches?) then (yes)
+else (no)
+  :Fail with commit-mismatch diagnostic;
+  stop
+endif
+:Build and recreate PR container;
+if (Build succeeded?) then (yes)
+else (no)
+  :Fail with build diagnostics;
+  stop
+endif
+:Refresh gateway include and reload Nginx;
+if (Requested container and both URLs healthy?) then (yes)
+  :Save verified content fingerprint;
+  :Return deployed + URL;
+else (no)
+  :Fail with health diagnostics;
+endif
+stop
+@enduml

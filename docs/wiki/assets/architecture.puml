@@ -1,0 +1,39 @@
+@startuml
+!pragma layout smetana
+title LRAI Agent - GitHub App worker and Jetson previews
+top to bottom direction
+skinparam shadowing false
+skinparam componentStyle rectangle
+actor "Authorized GitHub user" as user
+cloud "GitHub\nIssues + App API" as github
+node "Linux worker host" {
+  component "Public Funnel :8443\nor HTTPS proxy" as ingress
+  component "Receiver\n127.0.0.1:8095" as receiver
+  database "Disk spool\n/var/lib/lrai-agent/webhook-spool" as spool
+  component "Separate worker\nservice user: lrai-agent" as worker
+  component "Codex / Claude CLI\nprovider OAuth" as provider
+  component "Root-owned preview deployer\nCalify-only host policy" as deployer
+  component "Nginx gateway\n127.0.0.1:8090" as gateway
+  node "Docker" {
+    component "Calify PR container\ncalify-pr-N" as preview
+  }
+}
+actor "Tailnet browser" as browser
+cloud "Private Serve :443" as serve
+user --> github : recognized command
+github --> ingress : signed webhook
+ingress --> receiver
+receiver --> spool : queue
+worker --> spool : claim / archive
+worker --> provider : prompt via stdin
+worker --> github : installation token\ncomments / draft PR
+worker --> deployer : exact ref + SHA + context hash
+deployer --> preview : build / health-check
+browser --> serve : private HTTPS
+serve --> gateway
+gateway --> preview : calify_default network
+note bottom of worker
+One service user, temporary task checkouts.
+Not a VM-per-task isolation boundary.
+end note
+@enduml
