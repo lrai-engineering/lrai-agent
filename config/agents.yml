@@ -22,6 +22,12 @@ providers:
     executable: claude
     # model: sonnet
 
+# Repository-owned preview identity. The worker-side deployment policy maps
+# this app name to an allowlisted Jetson target; it is not a hostname or shell
+# command and cannot select arbitrary infrastructure.
+# preview:
+#   app: calify
+
 # The plan command is read-only. The implement command confines Codex to its
 # workspace-write sandbox and Claude to file tools without Bash or network
 # tools. These command policies are invariants and are not configurable.

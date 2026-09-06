@@ -1,0 +1,2 @@
+Defaults:lrai-agent env_keep += "LRAI_GITHUB_TOKEN"
+lrai-agent ALL=(root) NOPASSWD: /usr/local/sbin/lrai-agent-preview-deploy *

@@ -11,6 +11,8 @@ import { loadConfig, selectProvider } from "./config.js";
 import { taskFromEnvironment } from "./github.js";
 import { createInvocation, runInvocation } from "./providers.js";
 import { loadPrompt } from "./task.js";
+import { startWebhookServer } from "./webhook.js";
+import { runWorker } from "./worker.js";
 import type { AgentCommand } from "./types.js";
 
 const HELP = `lrai-agent v0.2
@@ -19,6 +21,8 @@ Usage:
   lrai-agent plan [options]
   lrai-agent implement [options]
   lrai-agent fetch-attachments [options]
+  lrai-agent webhook [options]
+  lrai-agent worker [--once]
 
 Options:
   --provider <codex|claude>  Override the configured provider
@@ -50,7 +54,9 @@ async function main(): Promise<number> {
   if (
     command !== "plan" &&
     command !== "implement" &&
-    command !== "fetch-attachments"
+    command !== "fetch-attachments" &&
+    command !== "webhook" &&
+    command !== "worker"
   ) {
     throw new Error(`unknown command: ${command}\n\n${HELP}`);
   }
@@ -70,11 +76,34 @@ async function main(): Promise<number> {
       output: { type: "string" },
       attachments: { type: "string" },
       "dry-run": { type: "boolean", default: false },
+      once: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
   if (values.help) {
     process.stdout.write(HELP);
+    return 0;
+  }
+
+  if (command === "webhook") {
+    const secret = process.env.LRAI_GITHUB_WEBHOOK_SECRET;
+    if (secret === undefined) throw new Error("LRAI_GITHUB_WEBHOOK_SECRET is required");
+    const allowedSenders = new Set(
+      (process.env.LRAI_ALLOWED_SENDERS ?? "").split(",").map((value) => value.trim()).filter(Boolean),
+    );
+    await startWebhookServer({
+      secret,
+      allowedSenders,
+      spoolDirectory: process.env.LRAI_WEBHOOK_SPOOL ?? "/var/lib/lrai-agent/webhook-spool",
+      ...(process.env.LRAI_WEBHOOK_HOST === undefined ? {} : { host: process.env.LRAI_WEBHOOK_HOST }),
+      ...(process.env.LRAI_WEBHOOK_PORT === undefined ? {} : { port: Number(process.env.LRAI_WEBHOOK_PORT) }),
+    });
+    process.stdout.write("LRAI webhook receiver listening\n");
+    return await new Promise<number>(() => undefined);
+  }
+
+  if (command === "worker") {
+    await runWorker(process.env.LRAI_WEBHOOK_SPOOL ?? "/var/lib/lrai-agent/webhook-spool", values.once ?? false);
     return 0;
   }
 

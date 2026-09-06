@@ -21,6 +21,10 @@ installation. Never edit or vendor `~/actions-runner/run.sh`, `bin/`,
 - Any future mutation command must expose its policy explicitly and must not
   silently inherit authority from `plan`.
 - Spawn provider commands without a shell and pass task prompts through stdin.
+- The GitHub App webhook receiver is ingress-only. The separate worker claims
+  queued tasks, uses short-lived installation tokens, and works in disposable
+  temporary directories. Never mount the developer's home or provider state
+  into a task workspace.
 
 ## Validation
 
@@ -37,6 +41,11 @@ accidentally widen permissions.
 
 Attachment changes must also test URL filtering, redirect credential handling,
 size limits, manifest validation, prompt context, and Codex image arguments.
+
+Webhook changes must test signature verification, body-size limits, sender and
+label authorization, delivery idempotency, and spool cleanup. Worker changes
+must test installation-token handling, temporary workspace cleanup, and
+draft-PR boundaries.
 
 `implement` may edit only the checked-out workspace. Git operations, pull
 request publication, issue comments, CI feedback, and deployment remain owned

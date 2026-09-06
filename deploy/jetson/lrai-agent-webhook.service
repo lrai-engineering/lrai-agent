@@ -1,0 +1,24 @@
+[Unit]
+Description=LRAI Agent GitHub webhook receiver
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lrai-agent
+Group=lrai-agent
+WorkingDirectory=/opt/lrai-agent
+EnvironmentFile=/etc/lrai-agent/webhook.env
+ExecStart=/opt/lrai-agent/bin/node /opt/lrai-agent/lib/node_modules/@lrai-engineering/lrai-agent/dist/src/index.js webhook
+Environment=PATH=/opt/lrai-agent/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lrai-agent/webhook-spool
+NoNewPrivileges=true
+PrivateDevices=true
+
+[Install]
+WantedBy=multi-user.target

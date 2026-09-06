@@ -1,5 +1,6 @@
 export type ProviderName = "codex" | "claude";
 export type AgentCommand = "plan" | "implement";
+export type WebhookCommand = AgentCommand | "deploy" | "unknown";
 
 export interface TaskAttachment {
   sourceUrl: string;
@@ -42,6 +43,9 @@ export interface AgentConfig {
     codex: CodexConfig;
     claude: ClaudeConfig;
   };
+  preview?: {
+    app: string;
+  };
 }
 
 export interface LoadedConfig {
@@ -54,4 +58,19 @@ export interface Invocation {
   args: string[];
   cwd: string;
   stdin: string;
+}
+
+export interface WebhookTask {
+  delivery: string;
+  event: string;
+  command: string;
+  repository?: string;
+  defaultBranch?: string;
+  issueNumber?: number;
+  title?: string;
+  body?: string;
+  sender?: string;
+  installationId?: number;
+  deployPreview?: boolean;
+  consumeLabels?: string[];
 }

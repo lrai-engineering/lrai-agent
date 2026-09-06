@@ -59,7 +59,7 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
   if (!isRecord(raw)) throw new Error("configuration must be a YAML object");
   assertKnownKeys(
     raw,
-    ["version", "provider", "plan", "implement", "providers"],
+    ["version", "provider", "plan", "implement", "providers", "preview"],
     "config",
   );
   if (raw.version !== undefined && raw.version !== 1) {
@@ -69,12 +69,15 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
   const plan = raw.plan === undefined ? {} : raw.plan;
   const implement = raw.implement === undefined ? {} : raw.implement;
   const providers = raw.providers === undefined ? {} : raw.providers;
+  const preview = raw.preview === undefined ? undefined : raw.preview;
   if (!isRecord(plan)) throw new Error("plan must be an object");
   if (!isRecord(implement)) throw new Error("implement must be an object");
   if (!isRecord(providers)) throw new Error("providers must be an object");
+  if (preview !== undefined && !isRecord(preview)) throw new Error("preview must be an object");
   assertKnownKeys(plan, ["prompt"], "plan");
   assertKnownKeys(implement, ["prompt"], "implement");
   assertKnownKeys(providers, ["codex", "claude"], "providers");
+  if (preview !== undefined) assertKnownKeys(preview, ["app"], "preview");
 
   const codex = providers.codex === undefined ? {} : providers.codex;
   const claude = providers.claude === undefined ? {} : providers.claude;
@@ -98,6 +101,10 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
   );
   const codexModel = optionalString(codex.model, "providers.codex.model");
   const claudeModel = optionalString(claude.model, "providers.claude.model");
+  const previewApp = preview === undefined ? undefined : optionalString(preview.app, "preview.app");
+  if (previewApp !== undefined && !/^[a-z][a-z0-9-]{0,38}$/.test(previewApp)) {
+    throw new Error("preview.app must be a lowercase URL-safe application name");
+  }
 
   return {
     version: 1,
@@ -125,6 +132,7 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
         ...(claudeModel === undefined ? {} : { model: claudeModel }),
       },
     },
+    ...(previewApp === undefined ? {} : { preview: { app: previewApp } }),
   };
 }
 

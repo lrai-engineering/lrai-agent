@@ -19,13 +19,20 @@ describe("loadConfig", () => {
     const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
     await writeFile(
       path.join(directory, ".lrai-agent.yml"),
-      "version: 1\nprovider: claude\nproviders:\n  claude:\n    model: sonnet\n",
+      "version: 1\nprovider: claude\npreview:\n  app: calify\nproviders:\n  claude:\n    model: sonnet\n",
     );
 
     const loaded = await loadConfig(directory, undefined);
     expect(loaded.config.provider).toBe("claude");
     expect(loaded.config.providers.claude.model).toBe("sonnet");
     expect(loaded.config.providers.codex.executable).toBe("codex");
+    expect(loaded.config.preview?.app).toBe("calify");
+  });
+
+  it("rejects unsafe preview application names", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(path.join(directory, ".lrai-agent.yml"), "version: 1\npreview:\n  app: ../gateway\n");
+    await expect(loadConfig(directory, undefined)).rejects.toThrow("preview.app");
   });
 
   it("rejects an unknown provider", async () => {

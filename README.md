@@ -96,10 +96,42 @@ the explicit `LRAI_CONFIG` file. See
 A consuming repository can copy
 [`templates/github/agent-issue.yml`](templates/github/agent-issue.yml), replace
 the approved GitHub login, and customize its validation step. Create the issue
-with exactly one automation label, or add exactly one afterward:
+with exactly one agent label, or add one afterward:
 
 - `codex` or `claude`: implement the issue
 - `codex-plan` or `claude-plan`: produce a read-only plan
+- `deploy`: deploy the latest implementation PR for the issue to its configured
+  private preview
+
+Combining `codex` or `claude` with `deploy` implements the issue and deploys
+the resulting PR preview. Adding `deploy` later runs deployment only; it does
+not repeat implementation. `deploy` is consumed when claimed, so it can be
+added again for an intentional retry. These deployment-aware semantics apply
+to the GitHub App webhook worker; the reusable GitHub Actions template still
+requires an explicit repository deployment step.
+
+Repeating `deploy` reuses a healthy preview only when its exact PR head commit
+and issue/PR content match the last verified deployment. Content includes
+titles, bodies, human comments, and review discussion; bot comments and label
+timestamps are excluded. New commits on the same branch or changed content
+trigger deployment. A reused preview receives a “Nothing changed; no redeploy
+needed” comment with its URL and commit. Both the local gateway and private
+HTTPS URL must pass health checks. Existing previews without a saved content
+fingerprint deploy once to establish that baseline. Editing an issue does not
+implement its instructions: `deploy` still deploys the current PR code.
+
+Deployment commands receive `--context-sha` (SHA-256 of that content) alongside
+the repository, PR number, ref, commit SHA, and app. On success they must print
+one JSON result: `{"status":"deployed","url":"https://..."}` or
+`{"status":"unchanged","url":"https://..."}`. Diagnostics go to stderr.
+Failed tasks are archived as `.json.failed`; the daemon logs the error and
+continues processing. `worker --once` processes its batch and exits nonzero if
+any task failed.
+
+To apply this fix to an existing Jetson installation after `npm run check`, run
+`sudo bash deploy/jetson/update-preview-worker.sh`. This backs up and replaces
+the worker module and deployer together, then restarts only the worker. Let
+active/queued tasks finish first.
 
 The workflow removes the automation label when it claims the run; add it again
 to rerun. Adding unrelated labels does not retrigger the agent, and issues with
@@ -125,6 +157,51 @@ discarding context.
 Keep authorization gates in the workflow. Issue titles, bodies, and attachments
 are untrusted input, and a workflow must decide which actors and labels are
 allowed to start an agent before invoking this program.
+
+## GitHub App webhook receiver
+
+The package also contains the small, signature-verifying ingress service used
+by the Jetson worker. It listens on localhost by default and only spools
+authorized, explicitly labeled issue tasks; it does not execute providers.
+Webhook envelopes are limited to 10 MiB. Issue attachments remain limited to
+8 files, 10 MiB per file, and 30 MiB total.
+
+```bash
+LRAI_GITHUB_WEBHOOK_SECRET='a-random-secret-at-least-32-characters' \
+LRAI_ALLOWED_SENDERS=lukasijus \
+LRAI_WEBHOOK_SPOOL=/var/lib/lrai-agent/webhook-spool \
+lrai-agent webhook
+```
+
+For the Jetson, expose only port `8443` through Tailscale Funnel and forward it
+to the receiver's `127.0.0.1:8095`. Keep the existing private Tailscale Serve
+gateway on port 443 unchanged. The expected App URL is:
+
+```text
+https://jetson.tail68fd31.ts.net:8443/github/webhook
+```
+
+The receiver is an ingress boundary, not the task worker. A subsequent worker
+must claim spool files idempotently and execute each task in an isolated
+workspace.
+
+The worker can be started with `lrai-agent worker`. It consumes queued tasks,
+uses a short-lived GitHub App installation token, clones into a private
+temporary workspace, downloads issue attachments, runs the selected provider,
+and posts the result or failure back to the issue. Preview deployment is an
+explicit worker policy step: the repository supplies only a safe preview app
+name, while the worker's `LRAI_PREVIEW_DEPLOY_COMMAND` selects an allowlisted
+deployment manager and receives the exact PR ref and commit as arguments. On
+the Jetson installation, it points to the root-owned, sudo-allowlisted
+deployer; the short-lived GitHub token is passed only to that local process and
+must never be logged.
+
+Install the current Jetson deployer after publishing the worker and gateway
+changes:
+
+```bash
+sudo bash deploy/jetson/install-preview-deployer.sh
+```
 
 ## Ownership boundary
 
