@@ -24,7 +24,8 @@ The worker initially clones the default branch and loads this configuration befo
 | --- | --- |
 | `version` | `1` |
 | `provider` | `codex`; command labels select their explicit provider |
-| `providers.codex.model` | Omitted: provider CLI default |
+| `providers.codex.model` | `gpt-6-astra` |
+| `providers.codex.reasoningEffort` | `medium`; accepted values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (model support varies) |
 | `providers.claude.model` | Omitted: provider CLI default |
 | `plan.prompt` | Packaged `prompts/plan.md` |
 | `implement.prompt` | Packaged `prompts/implement.md` |
@@ -34,6 +35,28 @@ The worker initially clones the default branch and loads this configuration befo
 An explicitly configured prompt path is resolved relative to its configuration file. Prompt templates support `{{repository}}`, `{{issueReference}}`, `{{sender}}`, `{{title}}`, and `{{body}}`.
 
 `LRAI_CONFIG=/absolute/path/config.yml` selects a complete host-owned configuration instead of the repository file; the two files are not layered. Only this explicit configuration can override provider executables. Setting it globally can also override the repository's preview identity or model/prompt choices.
+
+Both `codex` and `codex-plan` default to Astra with medium reasoning. LRAI Agent
+passes the model and reasoning effort explicitly to Codex, which runs with
+`--ignore-user-config`; changing the operator's or service user's Codex config
+does not change these settings. Explicit repository settings still override the
+defaults, for example:
+
+```yaml
+version: 1
+providers:
+  codex:
+    model: gpt-5.6-sol
+    reasoningEffort: medium
+```
+
+Use exact model IDs supported by the worker's Codex account. Astra's documented
+reasoning levels include `medium`; see the
+[OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-astra).
+Asking for another model in issue prose does not change the selected model.
+There are currently no model-selection labels or comment arguments; the existing
+command chooses the provider, and configuration chooses its model before the
+prompt is sent.
 
 ## Command reference
 

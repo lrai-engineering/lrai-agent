@@ -31,6 +31,9 @@ export function createInvocation(
     if (providerConfig.model !== undefined) {
       args.push("--model", providerConfig.model);
     }
+    if (providerConfig.reasoningEffort !== undefined) {
+      args.push("--config", `model_reasoning_effort=${JSON.stringify(providerConfig.reasoningEffort)}`);
+    }
     for (const attachment of task.attachments ?? []) {
       if (attachment.kind === "image") {
         args.push(

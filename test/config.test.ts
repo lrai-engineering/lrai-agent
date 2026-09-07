@@ -12,6 +12,8 @@ describe("loadConfig", () => {
     expect(loaded.config.provider).toBe("codex");
     expect(loaded.config.implement.prompt).toBe("prompts/implement.md");
     expect(loaded.config.providers.codex.executable).toBe("codex");
+    expect(loaded.config.providers.codex.model).toBe("gpt-6-astra");
+    expect(loaded.config.providers.codex.reasoningEffort).toBe("medium");
     expect(loaded.config.providers.claude.executable).toBe("claude");
   });
 
@@ -27,6 +29,25 @@ describe("loadConfig", () => {
     expect(loaded.config.providers.claude.model).toBe("sonnet");
     expect(loaded.config.providers.codex.executable).toBe("codex");
     expect(loaded.config.preview?.app).toBe("calify");
+    expect(loaded.config.providers.codex.model).toBe("gpt-6-astra");
+    expect(loaded.config.providers.codex.reasoningEffort).toBe("medium");
+  });
+
+  it("allows explicit model and reasoning overrides", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(path.join(directory, ".lrai-agent.yml"),
+      "providers:\n  codex:\n    model: gpt-5.6-sol\n    reasoningEffort: high\n");
+    const loaded = await loadConfig(directory, undefined);
+    expect(loaded.config.providers.codex.model).toBe("gpt-5.6-sol");
+    expect(loaded.config.providers.codex.reasoningEffort).toBe("high");
+  });
+
+  it.each(["turbo", "", 42, null])("rejects invalid reasoning effort %j", async (effort) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-config-"));
+    await writeFile(path.join(directory, ".lrai-agent.yml"), JSON.stringify({
+      providers: { codex: { reasoningEffort: effort } },
+    }));
+    await expect(loadConfig(directory, undefined)).rejects.toThrow("providers.codex.reasoningEffort must be one of");
   });
 
   it("rejects unsafe preview application names", async () => {

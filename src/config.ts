@@ -11,6 +11,8 @@ const DEFAULT_CONFIG: AgentConfig = {
   providers: {
     codex: {
       executable: "codex",
+      model: "gpt-6-astra",
+      reasoningEffort: "medium",
     },
     claude: {
       executable: "claude",
@@ -83,7 +85,7 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
   const claude = providers.claude === undefined ? {} : providers.claude;
   if (!isRecord(codex)) throw new Error("providers.codex must be an object");
   if (!isRecord(claude)) throw new Error("providers.claude must be an object");
-  assertKnownKeys(codex, ["executable", "model"], "providers.codex");
+  assertKnownKeys(codex, ["executable", "model", "reasoningEffort"], "providers.codex");
   assertKnownKeys(claude, ["executable", "model"], "providers.claude");
   if (
     !allowExecutableOverride &&
@@ -99,7 +101,12 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
     ["codex", "claude"] as const,
     "provider",
   );
-  const codexModel = optionalString(codex.model, "providers.codex.model");
+  const codexModel = optionalString(codex.model, "providers.codex.model") ?? DEFAULT_CONFIG.providers.codex.model;
+  const codexReasoningEffort = enumValue(
+    codex.reasoningEffort,
+    ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
+    "providers.codex.reasoningEffort",
+  ) ?? DEFAULT_CONFIG.providers.codex.reasoningEffort;
   const claudeModel = optionalString(claude.model, "providers.claude.model");
   const previewApp = preview === undefined ? undefined : optionalString(preview.app, "preview.app");
   if (previewApp !== undefined && !/^[a-z][a-z0-9-]{0,38}$/.test(previewApp)) {
@@ -124,6 +131,7 @@ function mergeConfig(raw: unknown, allowExecutableOverride: boolean): AgentConfi
           optionalString(codex.executable, "providers.codex.executable") ??
           DEFAULT_CONFIG.providers.codex.executable,
         ...(codexModel === undefined ? {} : { model: codexModel }),
+        ...(codexReasoningEffort === undefined ? {} : { reasoningEffort: codexReasoningEffort }),
       },
       claude: {
         executable:

@@ -16,7 +16,8 @@ provider: codex
 providers:
   codex:
     executable: codex
-    # model: gpt-5-codex
+    model: gpt-6-astra
+    reasoningEffort: medium
 
   claude:
     executable: claude

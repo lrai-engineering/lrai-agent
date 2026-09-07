@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createInvocation } from "../src/providers.js";
+import { loadConfig } from "../src/config.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { AgentConfig, TaskContext } from "../src/types.js";
 
 const config: AgentConfig = {
@@ -27,6 +31,27 @@ const task: TaskContext = {
 };
 
 describe("createInvocation", () => {
+  it.each(["plan", "implement"] as const)("uses Astra medium for %s by default", async (command) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-provider-"));
+    const loaded = await loadConfig(directory, undefined);
+    const invocation = createInvocation(command, "codex", loaded.config, task, "prompt");
+    expect(invocation.args).toContain("--ignore-user-config");
+    expect(invocation.args.slice(invocation.args.indexOf("--model"), invocation.args.indexOf("--model") + 4))
+      .toEqual(["--model", "gpt-6-astra", "--config", 'model_reasoning_effort="medium"']);
+    expect(invocation.args[invocation.args.indexOf("--sandbox") + 1])
+      .toBe(command === "plan" ? "read-only" : "workspace-write");
+  });
+
+  it("passes explicit Codex model and effort overrides as separate arguments", () => {
+    const overridden = { ...config, providers: { ...config.providers,
+      codex: { executable: "codex", model: "gpt-5.6-sol", reasoningEffort: "high" as const },
+    } };
+    const invocation = createInvocation("plan", "codex", overridden, task, "prompt");
+    expect(invocation.args.slice(-5)).toEqual([
+      "--model", "gpt-5.6-sol", "--config", 'model_reasoning_effort="high"', "-",
+    ]);
+  });
+
   it("passes Codex arguments without a shell", () => {
     const invocation = createInvocation(
       "plan",

@@ -93,6 +93,11 @@ provider: claude
 ```
 
 Configuration is discovered from `.lrai-agent.yml` in the target repository.
+Codex defaults to `gpt-6-astra` with `medium` reasoning for both planning and
+implementation. Override these with `providers.codex.model` and
+`providers.codex.reasoningEffort`; the worker passes them explicitly because
+Codex runs with `--ignore-user-config`. Model names in issue prose do not select
+the model, and model-selection labels are not currently supported.
 Repository configuration can choose the provider, model, or a repository-owned
 prompt. Provider executable paths are worker policy and are only accepted from
 the explicit `LRAI_CONFIG` file. See

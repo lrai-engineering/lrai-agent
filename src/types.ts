@@ -23,6 +23,7 @@ export interface TaskContext {
 export interface CodexConfig {
   executable: string;
   model?: string;
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 export interface ClaudeConfig {
