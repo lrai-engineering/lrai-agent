@@ -105,6 +105,14 @@ the explicit `LRAI_CONFIG` file. See
 
 ## Phone-friendly GitHub issue workflow
 
+GitHub worker implementation runs prepare pnpm dependencies before invoking the
+agent, refresh lockfiles afterward, and require sandboxed lint/test/build checks
+before preview deployment. One automatic repair attempt is allowed; a remaining
+failure preserves the draft PR and skips deployment. The worker requires an
+operator-installed pnpm version matching the project and Bubblewrap; see the
+[VM setup](docs/wiki/VM-Setup.md). Other package managers need an explicit worker
+adapter. Local CLI commands retain their existing bounded behavior.
+
 A consuming repository can copy
 [`templates/github/agent-issue.yml`](templates/github/agent-issue.yml), replace
 the approved GitHub login, and customize its validation step. Create the issue

@@ -79,6 +79,20 @@ export interface InvocationResult {
   stdout: string;
 }
 
+export function providerEnvironment(source = process.env): NodeJS.ProcessEnv {
+  // Authentication remains provider-native. Never inherit webhook secrets,
+  // GitHub installation tokens, cloud credentials, or npm credentials.
+  const allowed = ["PATH", "HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"];
+  return {
+    ...Object.fromEntries(allowed.flatMap(key => source[key] === undefined ? [] : [[key, source[key]]])),
+    // pnpm 11 defaults to implicitly installing before scripts. The worker has
+    // already prepared dependencies; the provider must not retry network setup.
+    npm_config_verify_deps_before_run: "false",
+    npm_config_manage_package_manager_versions: "false",
+  };
+}
+
 export async function runInvocation(
   invocation: Invocation,
 ): Promise<InvocationResult> {
@@ -86,7 +100,7 @@ export async function runInvocation(
     const chunks: Buffer[] = [];
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
-      env: process.env,
+      env: providerEnvironment(),
       stdio: ["pipe", "pipe", "inherit"],
     });
 

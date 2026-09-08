@@ -29,5 +29,13 @@ Constraints:
   infrastructure applies, or live billing mutations.
 - Preserve unrelated work and avoid broad redesigns that are not required by
   the issue.
+- The GitHub worker prepares dependencies before invocation and updates the
+  lockfile after implementation in a separate networked sandbox. Your own
+  sandbox remains offline. Use the installed dependencies and framework docs;
+  declare needed dependency changes in package.json without inventing lockfile
+  entries. The worker runs offline lint, test (when present), and build checks
+  and may return one validation diagnostic for repair before publication.
+- Link output documents with repository-relative paths, not temporary absolute
+  workspace paths that will disappear after the run.
 - Summarize the changes, validation performed, remaining risks, and blockers in
   the final response.

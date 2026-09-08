@@ -10,7 +10,8 @@ Group=lrai-agent
 WorkingDirectory=/opt/lrai-agent
 EnvironmentFile=/etc/lrai-agent/webhook.env
 ExecStart=/opt/lrai-agent/bin/node /opt/lrai-agent/lib/node_modules/@lrai-engineering/lrai-agent/dist/src/index.js worker
-Environment=PATH=/usr/bin:/bin:/opt/lrai-agent/bin
+Environment=PATH=/opt/lrai-agent/bin:/usr/bin:/bin
+Environment=LRAI_WORKER_TOOLCHAIN=/opt/lrai-agent
 Environment=HOME=/var/lib/lrai-agent
 Environment=XDG_CONFIG_HOME=/var/lib/lrai-agent/.config
 Environment=CODEX_HOME=/var/lib/lrai-agent/.codex

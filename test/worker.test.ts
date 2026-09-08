@@ -7,10 +7,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { createInstallationToken } from "../src/github-app.js";
 import { deployPreview, processSpoolTask, runWorker } from "../src/worker.js";
+import { prepareWorkspace, validateWorkspace } from "../src/workspace-validation.js";
+import { runInvocation } from "../src/providers.js";
 
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 vi.mock("../src/github-app.js", () => ({ createInstallationToken: vi.fn() }));
 vi.mock("../src/config.js", () => ({ loadConfig: vi.fn(async () => ({ config: { preview: { app: "calify" } } })), selectProvider: vi.fn() }));
+vi.mock("../src/workspace-validation.js", () => ({ prepareWorkspace: vi.fn(), validateWorkspace: vi.fn() }));
+vi.mock("../src/providers.js", () => ({ createInvocation: vi.fn(() => ({})), runInvocation: vi.fn() }));
+vi.mock("../src/task.js", () => ({ loadPrompt: vi.fn(async () => "Implement task") }));
+vi.mock("../src/attachments.js", () => ({ fetchIssueAttachments: vi.fn(async () => ({ attachments: [] })) }));
 
 const pr = { number: 3, title: "Preview", html_url: "https://github.com/lukasijus/calify/pull/3", state: "open", body: "Closes #2", head: { ref: "agent/issue-2-test", sha: "a".repeat(40) } };
 const url = "https://jetson.tail68fd31.ts.net/calify-pr-3";
@@ -36,15 +42,19 @@ beforeEach(async () => {
   published = [];
   requests = [];
   calls = [];
+  vi.mocked(prepareWorkspace).mockReset().mockResolvedValue();
+  vi.mocked(validateWorkspace).mockReset().mockResolvedValue("Passed lint, test, build");
+  vi.mocked(runInvocation).mockReset().mockResolvedValue({ exitCode: 0, stdout: "Patch ready" });
   vi.stubEnv("LRAI_GITHUB_APP_ID", "123");
   vi.stubEnv("LRAI_GITHUB_PRIVATE_KEY_PATH", "/not/a/real/key");
   vi.stubEnv("LRAI_PREVIEW_DEPLOY_COMMAND", '["/test/deployer"]');
   vi.mocked(createInstallationToken).mockResolvedValue({ token: "ghs_test_secret", expiresAt: "2099-01-01" });
   vi.mocked(spawn).mockImplementation(((command: string, args: string[], options: { env: Record<string, string> }) => {
     calls.push({ command, args, options });
-    if (command === "git") workspace = args.at(-1)!;
+    if (command === "git" && args[0] === "clone") workspace = args.at(-1)!;
     const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
     queueMicrotask(() => {
+      if (command === "git" && args[0] === "status") child.stdout.write(" M package.json\n");
       if (command !== "git") {
         child.stdout.write(output);
         child.stderr.write(stderr);
@@ -56,6 +66,7 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     requests.push({ url: input, ...(init ? { init } : {}) });
     if (init?.method === "POST") {
+      if (input.endsWith("/pulls")) return Response.json(pr, { status: 201 });
       published.push((JSON.parse(String(init.body)) as { body: string }).body);
       return new Response("{}", { status: 201 });
     }
@@ -86,6 +97,56 @@ function contextSha() {
 }
 
 describe("preview worker", () => {
+  it("blocks deploy-only before the deployer when exact PR validation fails", async () => {
+    vi.mocked(validateWorkspace).mockRejectedValue(new Error("lint failed"));
+    await enqueue();
+    await expect(processSpoolTask(spool, "delivery.json")).rejects.toThrow("lint failed");
+    expect(calls.some(call => call.args[0] === "checkout" && call.args.includes(pr.head.sha))).toBe(true);
+    expect(calls.some(call => call.command === "/test/deployer")).toBe(false);
+    await expect(access(workspace)).rejects.toThrow();
+  });
+
+  it("prepares dependencies, repairs once, and deploys only after validation passes", async () => {
+    vi.mocked(validateWorkspace).mockRejectedValueOnce(new Error("type error"));
+    await writeFile(path.join(spool, "delivery.json"), JSON.stringify({ delivery: "delivery", repository: "lukasijus/calify", installationId: 10, issueNumber: 2, command: "codex", deployPreview: true }));
+    await processSpoolTask(spool, "delivery.json");
+    expect(prepareWorkspace).toHaveBeenNthCalledWith(1, workspace);
+    expect(runInvocation).toHaveBeenCalledTimes(2);
+    expect(validateWorkspace).toHaveBeenCalledTimes(2);
+    expect(published.join("\n")).toContain("Passed lint, test, build");
+    expect(calls.some(call => call.command === "/test/deployer")).toBe(true);
+  });
+
+  it("preserves a failing patch as a draft but never deploys it", async () => {
+    vi.mocked(validateWorkspace).mockRejectedValue(new Error("build failed"));
+    await writeFile(path.join(spool, "delivery.json"), JSON.stringify({ delivery: "delivery", repository: "lukasijus/calify", installationId: 10, issueNumber: 2, command: "codex", deployPreview: true }));
+    await expect(processSpoolTask(spool, "delivery.json")).rejects.toThrow("patch saved");
+    expect(runInvocation).toHaveBeenCalledTimes(2);
+    expect(requests.some(request => request.url.endsWith("/pulls") && request.init?.method === "POST")).toBe(true);
+    expect(published.join("\n")).toContain("BLOCKED: build failed");
+    expect(calls.some(call => call.command === "/test/deployer")).toBe(false);
+    expect(await readdir(spool)).toEqual(["delivery.json.failed"]);
+    await expect(access(workspace)).rejects.toThrow();
+  });
+
+  it("does not spend a provider run when dependency preparation fails", async () => {
+    vi.mocked(prepareWorkspace).mockRejectedValue(new Error("toolchain missing"));
+    await writeFile(path.join(spool, "delivery.json"), JSON.stringify({ delivery: "delivery", repository: "lukasijus/calify", installationId: 10, issueNumber: 2, command: "codex" }));
+    await expect(processSpoolTask(spool, "delivery.json")).rejects.toThrow("toolchain missing");
+    expect(runInvocation).not.toHaveBeenCalled();
+    expect(calls.some(call => call.args[0] === "push")).toBe(false);
+  });
+
+  it("keeps read-only planning available without a package toolchain", async () => {
+    vi.mocked(prepareWorkspace).mockRejectedValue(new Error("toolchain missing"));
+    await writeFile(path.join(spool, "delivery.json"), JSON.stringify({ delivery: "delivery", repository: "lukasijus/calify", installationId: 10, issueNumber: 2, command: "codex-plan" }));
+    await processSpoolTask(spool, "delivery.json");
+    expect(prepareWorkspace).not.toHaveBeenCalled();
+    expect(validateWorkspace).not.toHaveBeenCalled();
+    expect(runInvocation).toHaveBeenCalledTimes(1);
+    expect(calls.some(call => call.args[0] === "push")).toBe(false);
+  });
+
   it("reports unchanged with URL, passes exact identity and token, and cleans its workspace", async () => {
     await enqueue();
     await processSpoolTask(spool, "delivery.json");
@@ -98,6 +159,11 @@ describe("preview worker", () => {
     expect(requests.some((request) => request.url.includes("/labels/deploy") && request.init?.method === "DELETE")).toBe(true);
     expect(requests.every((request) => (request.init?.headers as Record<string, string>).authorization === "Bearer ghs_test_secret")).toBe(true);
     expect(requests.some((request) => request.url.endsWith("/pulls") && request.init?.method === "POST")).toBe(false);
+    for (const call of calls.filter(call => call.command === "git")) {
+      const helper = call.options.env.GIT_ASKPASS!;
+      expect(helper.startsWith(`${workspace}/`)).toBe(false);
+      await expect(access(helper)).rejects.toThrow();
+    }
   });
 
   it("changes context for live edits and human discussion, but ignores bot comments", async () => {

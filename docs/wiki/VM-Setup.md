@@ -59,6 +59,24 @@ sudo env PATH=/opt/lrai-agent/bin:/usr/bin:/bin \
 
 Keep the tarball for rollback. Do not use `npm link` or a global install of the source directory for the hardened service: that may leave a link into the operator's home instead of a readable installation under `/opt/lrai-agent`.
 
+Implementation and deploy-only runs also need Bubblewrap and an operator-pinned
+pnpm toolchain. The current adapter supports pnpm projects with `lint` and `build`
+scripts, plus `test` when present. Other stacks require a host-owned adapter and
+fail before execution instead of silently skipping validation. For Calify:
+
+```bash
+sudo apt-get install bubblewrap
+sudo env PATH=/opt/lrai-agent/bin:/usr/bin:/bin \
+  "$agent_npm" install --global --prefix /opt/lrai-agent --ignore-scripts \
+  npm@11.11.1 pnpm@11.25.0
+```
+
+The pnpm version must match the repository's exact `packageManager` value.
+`LRAI_WORKER_TOOLCHAIN` selects a host-owned prefix (default `/opt/lrai-agent`);
+do not point it at a home directory or any directory containing credentials.
+The prefix must be root-owned and immutable to the service user. User namespaces
+must be enabled for Bubblewrap. Validation never falls back to unsandboxed runs.
+
 ## 3. Install and authenticate the provider CLIs
 
 Install your approved Codex and/or Claude Code release into an operator-managed location available on the service PATH. For npm-distributed releases, the pattern is:

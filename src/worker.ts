@@ -9,6 +9,7 @@ import { loadConfig, selectProvider } from "./config.js";
 import { createInvocation, runInvocation } from "./providers.js";
 import { loadPrompt } from "./task.js";
 import type { WebhookTask } from "./types.js";
+import { prepareWorkspace, validateWorkspace } from "./workspace-validation.js";
 
 interface PullRequestSummary {
   number: number;
@@ -63,7 +64,9 @@ function required(value: string | undefined, name: string): string {
 }
 
 async function runGit(args: string[], cwd: string, token: string): Promise<string> {
-  const askpassPath = path.join(cwd, ".lrai-agent-askpass");
+  // Keep the helper outside the checkout: git add --all must never stage it.
+  const authDirectory = await mkdtemp(path.join(tmpdir(), "lrai-agent-git-"));
+  const askpassPath = path.join(authDirectory, "askpass");
   await writeFile(askpassPath, "#!/bin/sh\ncase \"$1\" in *Username*) echo x-access-token ;; *) echo \"$GIT_PASSWORD\" ;; esac\n", { mode: 0o700 });
   return await new Promise<string>((resolve, reject) => {
     const child = spawn("git", args, {
@@ -77,7 +80,7 @@ async function runGit(args: string[], cwd: string, token: string): Promise<strin
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
     child.once("error", reject);
     child.once("close", (code) => code === 0 ? resolve(stdout) : reject(new Error(`git failed (${code}): ${stderr.trim()}`)));
-  }).finally(async () => { await rm(askpassPath, { force: true }); });
+  }).finally(async () => { await rm(authDirectory, { recursive: true, force: true }); });
 }
 
 async function githubComment(token: string, repository: string, issueNumber: number, body: string): Promise<void> {
@@ -240,7 +243,14 @@ async function executeSpoolTask(spoolDirectory: string, processing: string): Pro
     let providerOutput = "";
     if (deployOnly) {
       pullRequest = await findLatestAgentPullRequest(token, repository, issueNumber);
+      await runGit(["fetch", "origin", pullRequest.head.sha], workspace, token);
+      await runGit(["checkout", "--detach", pullRequest.head.sha], workspace, token);
+      await prepareWorkspace(workspace);
+      await validateWorkspace(workspace);
     } else {
+      // Prepare before spending a model run: installed framework docs and tools
+      // must be available even though the provider's sandbox stays offline.
+      if (mode === "implement") await prepareWorkspace(workspace);
       const manifestPath = path.join(workspace, ".lrai-agent-attachments", "manifest.json");
       const manifest = await fetchIssueAttachments({ body: task.body ?? "", workingDirectory: workspace, manifestPath, token });
       const context = { repository, issueNumber: String(issueNumber), title: task.title ?? "GitHub issue", body: task.body ?? "", sender: task.sender ?? "unknown", workingDirectory: workspace, attachments: manifest.attachments };
@@ -249,7 +259,27 @@ async function executeSpoolTask(spoolDirectory: string, processing: string): Pro
       const result = await runInvocation(invocation);
       if (result.exitCode !== 0) throw new Error(`${provider} exited with code ${result.exitCode}`);
       providerOutput = result.stdout;
+      let validationFailure: string | undefined;
+      let validationSummary = "";
       if (mode === "implement") {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            await prepareWorkspace(workspace, true);
+            await prepareWorkspace(workspace);
+            validationSummary = await validateWorkspace(workspace);
+            validationFailure = undefined;
+            break;
+          } catch (error) {
+            validationFailure = error instanceof Error ? error.message : String(error);
+            if (attempt === 0) {
+              const repair = createInvocation(mode, provider, loaded.config, context,
+                `${prompt}\n\nThe outer worker's validation failed. Dependencies and the lockfile are managed by the worker. Fix the code using this diagnostic, then leave the patch uncommitted. This is the final automatic repair attempt.\n\n${validationFailure}`);
+              const repaired = await runInvocation(repair);
+              providerOutput += `\n\n## Validation repair\n\n${repaired.stdout}`;
+              if (repaired.exitCode !== 0) { validationFailure += `\nRepair provider exited ${repaired.exitCode}`; break; }
+            }
+          }
+        }
         await rm(path.join(workspace, ".lrai-agent-attachments"), { recursive: true, force: true });
         const changes = await runGit(["status", "--porcelain"], workspace, token);
         if (changes.trim() === "") throw new Error("implementation produced no working-tree changes");
@@ -264,7 +294,8 @@ async function executeSpoolTask(spoolDirectory: string, processing: string): Pro
         ], workspace, token);
         await runGit(["push", "--set-upstream", "origin", branch], workspace, token);
         pullRequest = await createDraftPullRequest(token, repository, task.title ?? `Issue #${issueNumber}`, branch, task.defaultBranch ?? "main", issueNumber);
-        await githubComment(token, repository, issueNumber, `Draft implementation PR: ${pullRequest.html_url}\n\n<!-- lrai-agent-pr:${pullRequest.number} -->\n\n## ${provider} output\n\n${providerOutput}`);
+        await githubComment(token, repository, issueNumber, `Draft implementation PR: ${pullRequest.html_url}\n\n<!-- lrai-agent-pr:${pullRequest.number} -->\n\n## Worker validation\n\n${validationFailure ? `BLOCKED: ${validationFailure}\n\nPatch preserved for review; preview deployment was skipped.` : validationSummary}\n\n## ${provider} output\n\n${providerOutput}`);
+        if (validationFailure) throw new Error(`Validation failed; patch saved in ${pullRequest.html_url}. Preview deployment skipped. ${validationFailure}`);
       } else {
         await githubComment(token, repository, issueNumber, `## ${provider} ${mode}\n\n${providerOutput}`);
       }

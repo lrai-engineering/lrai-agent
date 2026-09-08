@@ -35,6 +35,9 @@ Use the actual PR number. Do not post environment files, keys, OAuth caches, raw
 | Label disappeared but task failed | Consumption happens before task success. Inspect failure, then request a new run after correcting the cause. |
 | GitHub API 403/404 | Check selected installation repositories, accepted App permissions, branch/ruleset restrictions, and correct PR target. |
 | `203/EXEC` or command not found | Verify absolute Node path and service PATH; NVM from an interactive shell is not automatically available to systemd. |
+| Frozen lockfile mismatch after agent edits | The worker now refreshes dependencies/lockfile before validation. Install the current worker package; do not disable frozen installation in the deployment Dockerfile. |
+| Worker toolchain/version or Bubblewrap failure | Install the pinned pnpm version and Bubblewrap using VM setup. Check user namespaces and the host-owned toolchain prefix. There is no unsandboxed fallback. |
+| Validation blocked, draft PR preserved | Inspect the lint/test/build diagnostic and fix that PR; deployment is intentionally skipped. A deploy-only request revalidates the PR's current commit. |
 | Config/provider file missing under systemd | Check file permissions and whether npm linked the package into a protected home directory. Use a packed installation. |
 | Codex read-only-filesystem initialization error | Confirm writable service state, `CODEX_HOME`, and `ReadWritePaths=/var/lib/lrai-agent`. |
 | Provider login fails only in service | Authenticate the dedicated service-user home; verify installed executable and environment match the login environment. |

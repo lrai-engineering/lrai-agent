@@ -60,6 +60,23 @@ prompt is sent.
 
 ## Command reference
 
+For GitHub implementation tasks, the worker installs frozen dependencies before
+starting the provider, making framework documentation and package tools available.
+After edits it regenerates the lockfile with pnpm, verifies frozen installation,
+and runs offline lint, test (when present), and build. One provider repair attempt
+is allowed. Continued failures are saved as a draft PR with diagnostics and are
+never deployed. Deploy-only tasks validate the exact PR commit before invoking
+the preview deployer. The local `plan` and `implement` CLIs do not run this outer
+workflow themselves; planning remains read-only.
+
+Dependency installation has network access in a separate Bubblewrap sandbox with
+lifecycle scripts and pnpmfile hooks disabled. Validation scripts run in a
+network-isolated sandbox. Both see only public system/runtime files and their
+disposable checkout, with an empty environment and temporary home; neither gets
+provider state, GitHub tokens, host secrets, or the Docker socket. The provider
+retains its native login location but receives only an allowlist of environment
+variables. Specialized browser/CV tests remain separate from the basic gate.
+
 | Issue label or comment command | Result |
 | --- | --- |
 | `codex-plan` | Read-only Codex plan posted to the issue |
