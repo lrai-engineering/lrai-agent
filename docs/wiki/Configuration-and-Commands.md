@@ -95,6 +95,13 @@ Commands are case-sensitive. The receiver accepts these lines only on newly crea
 
 For label-driven issue events, the approved actor must also be the issue author. Ordinary unrelated labels are ignored.
 
+When an issue is created with command labels, GitHub also emits a `labeled`
+event for each initial label. LRAI handles the `opened` snapshot and ignores
+these creation-time label events (equal issue creation/update timestamps), even
+if they arrive first. Later label actions and explicit comment commands still
+work. Redelivery of an already queued, processing, completed, or failed delivery
+is acknowledged as a duplicate instead of starting another run.
+
 ## Combining labels
 
 The event matters, not just the final collection of labels.

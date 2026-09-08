@@ -40,6 +40,8 @@ if [[ "$1" == inspect ]]; then
     *State.Status*) echo running ;;
     *Aliases*) if [[ "$TEST_SHARED_ALIAS" == 1 ]]; then echo '["calify-pr-3","calify"]'; else echo '[]'; fi ;;
   esac
+elif [[ "$1" == exec && "$*" == *required-server-files.json* ]]; then
+  echo "\${TEST_BASE_PATH:-/calify-pr-3}"
 elif [[ "$1" == exec && "$*" == *"cat /etc/nginx/previews.conf"* ]]; then
   if [[ "$TEST_STALE_MOUNT" == 1 && ! -f "$TEST_ROOT/remounted" ]]; then echo stale; else cat "$TEST_ROOT/previews/gateway/previews.conf"; fi
 elif [[ "$1" == compose && "$*" == *"--force-recreate gateway"* ]]; then
@@ -64,6 +66,13 @@ async function deploy(requestedSha = sha, requestedContext = context) {
 }
 
 describe("Jetson preview deployer", () => {
+  it("reports a hardcoded base path without retrying impossible health checks", async () => {
+    env.TEST_BASE_PATH = "/calify";
+    await expect(deploy()).rejects.toMatchObject({ stderr: expect.stringContaining("Preview basePath mismatch") });
+    const calls = await readFile(path.join(root, "calls"), "utf8");
+    expect(calls).not.toContain("nginx -s reload");
+    await expect(readFile(state, "utf8")).rejects.toThrow();
+  });
   it("returns zero after deployment cleanup and records verified context", async () => {
     const result = await deploy();
     expect(JSON.parse(result.stdout)).toEqual({ status: "deployed", url: "https://jetson.tail68fd31.ts.net/calify-pr-3" });

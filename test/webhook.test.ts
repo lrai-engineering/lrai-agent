@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,6 +15,17 @@ afterEach(async () => {
 });
 
 describe("GitHub webhook receiver", () => {
+  it("ignores initial label fan-out but accepts later explicit label actions", () => {
+    const issue = { created_at: "2026-09-08T19:18:01Z", updated_at: "2026-09-08T19:18:01Z",
+      labels: [{ name: "codex" }, { name: "deploy" }] };
+    for (const name of ["codex", "deploy"]) {
+      expect(requestedTask({ action: "labeled", label: { name }, issue }, "issues")).toBeUndefined();
+    }
+    expect(requestedTask({ action: "opened", issue }, "issues"))
+      .toEqual({ command: "codex", deployPreview: true, consumeLabels: ["codex", "deploy"] });
+    expect(requestedTask({ action: "labeled", label: { name: "deploy" },
+      issue: { ...issue, updated_at: "2026-09-08T19:20:00Z" } }, "issues")?.command).toBe("deploy");
+  });
   it("treats deploy as an opt-in after implementation", () => {
     expect(requestedTask({ action: "labeled", label: { name: "codex" }, issue: { labels: [{ name: "codex" }, { name: "deploy" }] } }, "issues")).toEqual({ command: "codex", deployPreview: true, consumeLabels: ["codex", "deploy"] });
     expect(requestedTask({ action: "labeled", label: { name: "deploy" }, issue: { labels: [{ name: "codex" }, { name: "deploy" }] } }, "issues")).toEqual({ command: "deploy", deployPreview: true, consumeLabels: ["deploy"] });
@@ -41,6 +52,31 @@ describe("GitHub webhook receiver", () => {
     expect(await readFile(path.join(spool, "12345678-abcd.json"), "utf8")).toContain('"command": "codex"');
   });
 
+  it("queues one implementation for an out-of-order opened/codex/deploy creation burst", async () => {
+    const spool = await mkdtemp(path.join(os.tmpdir(), "lrai-webhook-"));
+    spools.push(spool);
+    const server = await startWebhookServer({ secret, spoolDirectory: spool, allowedSenders: new Set(["lukasijus"]), port: 0 });
+    servers.push(server);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("server has no address");
+    for (const [index, label] of ["deploy", "codex", undefined].entries()) {
+      const payload = JSON.stringify({ action: label ? "labeled" : "opened", label: { name: label },
+        issue: { number: 6, created_at: "2026-09-08T19:18:01Z", updated_at: "2026-09-08T19:18:01Z",
+          user: { login: "lukasijus" }, labels: [{ name: "codex" }, { name: "deploy" }] },
+        sender: { login: "lukasijus" }, repository: { full_name: "lukasijus/calify" } });
+      const response = await fetch(`http://127.0.0.1:${address.port}/github/webhook`, {
+        method: "POST", body: payload, headers: { "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(payload).digest("hex")}`,
+          "x-github-event": "issues", "x-github-delivery": `12345678-abcd-${index}` },
+      });
+      expect(await response.json()).toEqual({ status: label ? "ignored" : "queued" });
+    }
+    const files = await readdir(spool);
+    expect(files).toEqual(["12345678-abcd-2.json"]);
+    const task = JSON.parse(await readFile(path.join(spool, files[0]!), "utf8"));
+    expect(task.command).toBe("codex");
+    expect(task.deployPreview).toBe(true);
+  });
+
   it("rejects an invalid signature", async () => {
     const spool = await mkdtemp(path.join(os.tmpdir(), "lrai-webhook-"));
     spools.push(spool);
@@ -65,9 +101,15 @@ describe("GitHub webhook receiver", () => {
     const url = `http://127.0.0.1:${address.port}/github/webhook`;
     expect((await fetch(url, request)).status).toBe(202);
     const queued = await readFile(path.join(spool, "12345678-abcd.json"), "utf8");
-    expect((await fetch(url, request)).status).toBe(400);
+    expect(await (await fetch(url, request)).json()).toEqual({ status: "duplicate" });
     expect(await readdir(spool)).toEqual(["12345678-abcd.json"]);
     expect(await readFile(path.join(spool, "12345678-abcd.json"), "utf8")).toBe(queued);
+    for (const suffix of [".processing", ".done", ".failed"]) {
+      const previous = (await readdir(spool))[0]!;
+      await rename(path.join(spool, previous), path.join(spool, `12345678-abcd.json${suffix}`));
+      expect(await (await fetch(url, request)).json()).toEqual({ status: "duplicate" });
+      expect(await readdir(spool)).toEqual([`12345678-abcd.json${suffix}`]);
+    }
   });
 
   it("ignores signed commands from an unauthorized sender", async () => {

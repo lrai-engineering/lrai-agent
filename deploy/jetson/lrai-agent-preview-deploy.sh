@@ -132,6 +132,13 @@ if [[ "$preview_aliases" == *'"calify"'* ]]; then
   docker network disconnect calify_default "$container" >>"$compose_log" 2>&1
   docker network connect --alias "$container" calify_default "$container" >>"$compose_log" 2>&1
 fi
+# Detect a missing Docker build ARG or a hardcoded Next basePath immediately,
+# rather than spending the health timeout retrying a route the image cannot serve.
+actual_base_path=$(docker exec "$container" node -e 'console.log(JSON.parse(require("fs").readFileSync(".next/required-server-files.json", "utf8")).config.basePath)' 2>>"$compose_log") || { echo "Cannot inspect Next.js preview basePath" >&2; exit 1; }
+if [[ "$actual_base_path" != "$route" ]]; then
+  echo "Preview basePath mismatch: built '$actual_base_path', expected '$route'. Declare ARG CALIFY_BASE_PATH in the Docker builder and read process.env.CALIFY_BASE_PATH in next.config.ts; fix the PR before retrying." >&2
+  exit 1
+fi
 mkdir -p "$target_root"
 rm -rf -- "$target_root/current"
 mv -- "$staging" "$target_root/current"

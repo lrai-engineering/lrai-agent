@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import type { WebhookCommand } from "./types.js";
@@ -24,6 +24,8 @@ export interface WebhookOptions {
 interface GitHubIssuePayload {
   action?: string;
   issue?: {
+    created_at?: string;
+    updated_at?: string;
     number?: number;
     title?: string;
     body?: string | null;
@@ -71,6 +73,11 @@ export interface WebhookDecision {
 
 export function requestedTask(payload: GitHubIssuePayload, event: string): WebhookDecision | undefined {
   if (event === "issues") {
+    // GitHub emits one labeled event per initial label in addition to opened.
+    // The opened snapshot already includes those labels. Handle it exactly once,
+    // regardless of delivery order; later label changes have an updated timestamp.
+    if (payload.action === "labeled" && payload.issue?.created_at &&
+        payload.issue.created_at === payload.issue.updated_at) return undefined;
     const allLabels = (payload.issue?.labels ?? [])
       .map((label) => label.name)
       .filter((label): label is string => label !== undefined);
@@ -163,7 +170,22 @@ export async function startWebhookServer(options: WebhookOptions): Promise<Retur
         installationId: payload.installation?.id,
         payload,
       };
-      await writeFile(path.join(options.spoolDirectory, `${delivery}.json`), JSON.stringify(task, null, 2), { flag: "wx", mode: 0o600 });
+      const filename = path.join(options.spoolDirectory, `${delivery}.json`);
+      // A consumed delivery moves forward through these names. Check in that
+      // order so a concurrent worker rename does not hide an accepted delivery.
+      for (const suffix of ["", ".processing", ".done", ".failed"]) {
+        if (await access(`${filename}${suffix}`).then(() => true, () => false)) {
+          send(response, 202, "duplicate");
+          return;
+        }
+      }
+      try {
+        await writeFile(filename, JSON.stringify(task, null, 2), { flag: "wx", mode: 0o600 });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        send(response, 202, "duplicate");
+        return;
+      }
       send(response, 202, "queued");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
