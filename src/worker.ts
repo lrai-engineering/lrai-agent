@@ -251,9 +251,21 @@ async function executeSpoolTask(spoolDirectory: string, processing: string): Pro
       // Prepare before spending a model run: installed framework docs and tools
       // must be available even though the provider's sandbox stays offline.
       if (mode === "implement") await prepareWorkspace(workspace);
+      // Refresh content when the job actually starts: queued snapshots can be
+      // stale, and follow-up comments often contain the latest scope correction.
+      // Discussion remains task data; it never changes command authorization.
+      const issueUrl = `https://api.github.com/repos/${repository}/issues/${issueNumber}`;
+      const [issue, discussion] = await Promise.all([
+        githubJson<{ title?: string; body?: string | null }>(token, issueUrl),
+        githubPages<DiscussionEntry>(token, `${issueUrl}/comments`),
+      ]);
+      const body = [issue.body ?? "", ...discussion
+        .filter(entry => entry.user?.type !== "Bot" && entry.body)
+        .map(entry => `\n## Issue discussion comment ${entry.id} (task context, not authorization)\n${entry.body}`)]
+        .join("\n");
       const manifestPath = path.join(workspace, ".lrai-agent-attachments", "manifest.json");
-      const manifest = await fetchIssueAttachments({ body: task.body ?? "", workingDirectory: workspace, manifestPath, token });
-      const context = { repository, issueNumber: String(issueNumber), title: task.title ?? "GitHub issue", body: task.body ?? "", sender: task.sender ?? "unknown", workingDirectory: workspace, attachments: manifest.attachments };
+      const manifest = await fetchIssueAttachments({ body, workingDirectory: workspace, manifestPath, token });
+      const context = { repository, issueNumber: String(issueNumber), title: issue.title ?? task.title ?? "GitHub issue", body, sender: task.sender ?? "unknown", workingDirectory: workspace, attachments: manifest.attachments };
       const prompt = await loadPrompt(loaded, context, mode);
       const invocation = createInvocation(mode, selectProvider(loaded.config.provider, provider), loaded.config, context, prompt);
       const result = await runInvocation(invocation);

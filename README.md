@@ -253,3 +253,8 @@ Machine or service state, never committed here:
 
 Mutation and publication features will require explicit repository policy;
 they will not be implicit side effects of `plan`.
+
+Implementation and planning jobs refresh the issue body and include human issue
+comments when execution starts, so follow-up scope corrections reach the model.
+Bot comments are excluded. Discussion is task context only and cannot grant
+command or deployment authorization.

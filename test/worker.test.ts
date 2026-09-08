@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { createInstallationToken } from "../src/github-app.js";
 import { deployPreview, processSpoolTask, runWorker } from "../src/worker.js";
 import { prepareWorkspace, validateWorkspace } from "../src/workspace-validation.js";
+import { loadPrompt } from "../src/task.js";
 import { runInvocation } from "../src/providers.js";
 
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
@@ -97,6 +98,20 @@ function contextSha() {
 }
 
 describe("preview worker", () => {
+  it("refreshes queued issue text and includes human scope corrections, excluding bot output", async () => {
+    issueBody = "Current issue body";
+    comments = [{ id: 2, body: "Only one weight graph", user: { type: "User" } },
+      { id: 3, body: "Old generated dashboard", user: { type: "Bot" } }];
+    await writeFile(path.join(spool, "delivery.json"), JSON.stringify({ delivery: "delivery", repository: "lukasijus/calify", installationId: 10, issueNumber: 2, command: "codex", body: "stale queued text" }));
+    await processSpoolTask(spool, "delivery.json");
+    const context = vi.mocked(loadPrompt).mock.calls[0]![1];
+    expect(context.body).toContain("Current issue body");
+    expect(context.body).toContain("Only one weight graph");
+    expect(context.body).not.toContain("Old generated dashboard");
+    expect(context.body).not.toContain("stale queued text");
+    expect(calls.some(call => call.command === "/test/deployer")).toBe(false);
+  });
+
   it("blocks deploy-only before the deployer when exact PR validation fails", async () => {
     vi.mocked(validateWorkspace).mockRejectedValue(new Error("lint failed"));
     await enqueue();
