@@ -124,6 +124,14 @@ else
   tail -n 40 "$compose_log" >&2 || true
   exit "$preview_status"
 fi
+# Compose adds its service name "calify" as a network alias. On the shared
+# network that collides with the canonical main container. Keep only the PR's
+# unique name, otherwise an Nginx reload can route /calify to a PR at random.
+preview_aliases=$(docker inspect --format '{{json (index .NetworkSettings.Networks "calify_default").Aliases}}' "$container")
+if [[ "$preview_aliases" == *'"calify"'* ]]; then
+  docker network disconnect calify_default "$container" >>"$compose_log" 2>&1
+  docker network connect --alias "$container" calify_default "$container" >>"$compose_log" 2>&1
+fi
 mkdir -p "$target_root"
 rm -rf -- "$target_root/current"
 mv -- "$staging" "$target_root/current"
@@ -169,6 +177,15 @@ if docker compose -f /home/luke/jetson-app-gateway/compose.yaml up -d gateway >>
 else
   gateway_status=$?
   echo "warning: gateway compose returned $gateway_status; validating the live route" >&2
+fi
+
+# A previous updater or boot job may have replaced the bind-mounted file's
+# inode. Reloading Nginx cannot refresh that stale mount; recreate only when
+# the container actually sees different route contents.
+if ! docker exec jetson-app-gateway cat /etc/nginx/previews.conf | cmp -s "$routes_file" -; then
+  echo "Gateway route mount is stale; recreating the gateway container" >&2
+  docker compose -f /home/luke/jetson-app-gateway/compose.yaml up -d --force-recreate gateway >>"$compose_log" 2>&1 || { tail -n 40 "$compose_log" >&2; exit 1; }
+  docker exec jetson-app-gateway cat /etc/nginx/previews.conf | cmp -s "$routes_file" - || { echo "gateway still sees stale preview routes" >&2; exit 1; }
 fi
 
 # Nginx must load new routes and resolve a recreated preview container's IP.

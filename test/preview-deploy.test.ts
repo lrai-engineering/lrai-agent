@@ -38,7 +38,12 @@ if [[ "$1" == inspect ]]; then
     *preview.sha*)
       if [[ -f "$TEST_ROOT/built" ]]; then echo "$TEST_SHA"; else echo "$TEST_EXISTING_SHA"; fi ;;
     *State.Status*) echo running ;;
+    *Aliases*) if [[ "$TEST_SHARED_ALIAS" == 1 ]]; then echo '["calify-pr-3","calify"]'; else echo '[]'; fi ;;
   esac
+elif [[ "$1" == exec && "$*" == *"cat /etc/nginx/previews.conf"* ]]; then
+  if [[ "$TEST_STALE_MOUNT" == 1 && ! -f "$TEST_ROOT/remounted" ]]; then echo stale; else cat "$TEST_ROOT/previews/gateway/previews.conf"; fi
+elif [[ "$1" == compose && "$*" == *"--force-recreate gateway"* ]]; then
+  touch "$TEST_ROOT/remounted"
 elif [[ "$1" == compose && "$*" == *--build* ]]; then
   if [[ "$TEST_BUILD_FAIL" == 1 ]]; then echo "fixture build failed"; exit 17; fi
   touch "$TEST_ROOT/built"
@@ -76,6 +81,20 @@ describe("Jetson preview deployer", () => {
     expect(calls).not.toContain("git ");
     expect(calls).not.toContain("docker compose");
     expect(calls).toContain("https://jetson.tail68fd31.ts.net/calify-pr-3");
+  });
+
+  it("recreates a gateway with a stale bind mount before publishing success", async () => {
+    env.TEST_STALE_MOUNT = "1";
+    expect(JSON.parse((await deploy()).stdout).status).toBe("deployed");
+    expect(await readFile(path.join(root, "calls"), "utf8")).toContain("--force-recreate gateway");
+  });
+
+  it("removes the shared service alias so a PR cannot shadow main", async () => {
+    env.TEST_SHARED_ALIAS = "1";
+    expect(JSON.parse((await deploy()).stdout).status).toBe("deployed");
+    const calls = await readFile(path.join(root, "calls"), "utf8");
+    expect(calls).toContain("docker network disconnect calify_default calify-pr-3");
+    expect(calls).toContain("docker network connect --alias calify-pr-3 calify_default calify-pr-3");
   });
 
   it("redeploys a new commit on the same branch", async () => {

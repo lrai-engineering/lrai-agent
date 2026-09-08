@@ -49,6 +49,8 @@ Use the actual PR number. Do not post environment files, keys, OAuth caches, raw
 | Unknown label does nothing | GitHub label creation is not code registration; deploy both updated receiver and worker. |
 | Generic gateway 502 | Check gateway container, port 8090, upstream network/container, and Docker startup before changing Tailscale routes. |
 | Old preview loads after a build | Check container SHA, gateway include mount, and Nginx reload/resolution. A valid URL alone does not establish the intended commit. |
+| Host route file includes the PR but Nginx returns 404 | Compare the file inside the gateway; a replaced bind-mount inode requires gateway recreation. The deployer now detects this mismatch. |
+| `/calify` intermittently resolves to a PR | Older preview containers may carry Compose's shared `calify` alias. Reconnect those previews with only their unique `calify-pr-N` alias, then reload Nginx. New deployments remove this alias automatically. |
 
 ## The September 7 preview failure
 
