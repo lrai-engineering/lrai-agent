@@ -159,6 +159,8 @@ location = $route {
 }
 
 location ^~ $route/ {
+  # Allow an 8 MiB photo plus multipart or base64 request overhead.
+  client_max_body_size 12m;
   proxy_pass http://$container:80;
   proxy_http_version 1.1;
   proxy_set_header Host \$host;
