@@ -2,6 +2,158 @@
 
 These are operator-run instructions for a Linux/systemd host. Complete [Prerequisites](Prerequisites.md) first. The portable worker setup below does not install a GitHub Actions runner.
 
+## Ubuntu EC2 demo walkthrough
+
+The initial setup below was exercised on an Ubuntu x86_64 EC2 micro instance
+with 1 GiB RAM and approximately 3.5 GB free disk. This records initial setup,
+not a validated capacity recommendation: an agent implementation and preview
+build have not yet been tested on that instance. Check `free -h` and `df -h /`
+before larger builds; resize if memory or disk becomes a bottleneck.
+
+### Checkpoint: what is working
+
+| Component | Verified progress |
+| --- | --- |
+| Host tools | Node.js, npm, Git, Docker, and Nginx reported installed |
+| Agent runtime | Initial installer completed; dedicated `lrai-agent` user and runtime directories created |
+| Provider | Codex CLI 0.160.0 installed; device-code login completed as `lrai-agent` |
+| Nginx | Configuration test passed; localhost and an external HTTP request returned 200 |
+| EC2 networking | Public IPv4 assigned; inbound HTTP/HTTPS rules added; outbound access enabled |
+| Certificate tooling | Certbot 5.8 installed; certificate issuance and Nginx TLS configuration not yet confirmed |
+
+Still to configure and verify: the demo GitHub App and its installation,
+App key and webhook environment, webhook/worker services, the Nginx webhook
+proxy route, and a real issue-to-PR run. Bubblewrap execution and the consuming
+repository's pinned package manager must be checked before implementation.
+Preview deployment also needs a VM-specific adapter; the Jetson deployment
+script is not a generic Nginx installer.
+
+### 1. Prepare the host and network
+
+Use the instance's **public IPv4 address**, not its private `172.31.x.x` address.
+The subnet needs a route to an Internet Gateway. For this single-host demo, use
+these security-group rules:
+
+| Direction | Traffic | Source or destination |
+| --- | --- | --- |
+| Inbound | SSH, TCP 22 | Your administration IP address |
+| Inbound | HTTP, TCP 80 | `0.0.0.0/0` |
+| Inbound | HTTPS, TCP 443 | `0.0.0.0/0` |
+| Outbound | All traffic | `0.0.0.0/0` |
+
+Outbound access is needed for package downloads, GitHub, and the provider.
+An empty outbound rule list blocks new outbound connections; responses to
+allowed inbound connections are automatically permitted by security groups.
+See [AWS security-group guidance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/security-group-rules-reference.html).
+Keep the receiver's port 8095 and preview container ports internal.
+
+With Node.js 22+, npm, Git, and sudo already available, install the remaining
+basic tools if needed:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl ca-certificates xz-utils unzip jq nginx bubblewrap
+```
+
+Docker is for container previews, not a requirement for the receiver alone.
+
+### 2. Install the runtime and log in to Codex
+
+Use the **Initial runtime installer** section below. Run it as the Ubuntu login
+user with `bash scripts/install-runtime.sh`; executable permission is not needed
+when invoking the file through Bash. It does not install provider CLIs.
+
+Only one provider is needed for this demo. The following pins the Codex version
+used during setup. Commands are single lines to simplify pasting through tmux:
+
+```bash
+sudo env PATH=/opt/lrai-agent/bin:/usr/bin:/bin "$(command -v npm)" install --global --prefix /opt/lrai-agent @openai/codex@0.160.0
+/opt/lrai-agent/bin/codex --version
+sudo -u lrai-agent env HOME=/var/lib/lrai-agent CODEX_HOME=/var/lib/lrai-agent/.codex PATH=/opt/lrai-agent/bin:/usr/bin:/bin /opt/lrai-agent/bin/codex login --device-auth
+```
+
+Open the displayed login link on your own computer and complete device-code
+approval there. Authenticate as the service user so the worker can use the
+login; `/var/lib/lrai-agent` is its home directory, not a command to execute.
+Do not copy another machine's credentials or share login codes. See
+[OpenAI authentication guidance](https://developers.openai.com/codex/auth).
+
+Verify the login separately:
+
+```bash
+sudo -u lrai-agent env HOME=/var/lib/lrai-agent CODEX_HOME=/var/lib/lrai-agent/.codex PATH=/opt/lrai-agent/bin:/usr/bin:/bin /opt/lrai-agent/bin/codex login status
+```
+
+### 3. Verify public HTTP before configuring HTTPS
+
+```bash
+sudo nginx -t
+curl -I http://127.0.0.1
+```
+
+Expect a successful configuration test and HTTP 200. Then open
+`http://YOUR_PUBLIC_IP/` from another machine, explicitly using **http**. A
+successful local request alone does not prove public access. If the public
+request fails, first check the security group attached to this instance and its
+inbound TCP 80 rule. Adding that rule does not require restarting Nginx.
+
+The welcome page proves only that Nginx is reachable. It does not mean
+`/github/webhook` is routed to the receiver. Likewise, allowing TCP 443 in the
+security group does not configure an HTTPS listener or certificate.
+
+### 4. Certificate tooling checkpoint
+
+Certbot was installed with:
+
+```bash
+sudo snap install --classic certbot
+/snap/bin/certbot --version
+```
+
+The observed version was 5.8. Let's Encrypt supports IP-address certificates;
+Certbot 5.4+ supports obtaining them with webroot verification. These certificates
+last six days and need automatic renewal plus an Nginx reload hook. See
+[Let's Encrypt's IP certificate instructions](https://letsencrypt.org/2026/03/11/shorter-certs-certbot).
+Certificate issuance, renewal testing, and HTTPS activation remain pending in
+this walkthrough; installing Certbot alone does not enable HTTPS.
+
+Certbot is a hosting tool, not an LRAI Agent dependency. GitHub can deliver
+webhooks over HTTP, though [GitHub recommends HTTPS](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks).
+A temporary HTTP demo can test issue-to-PR behavior after the receiver and proxy
+are configured, using non-sensitive demo content. Keep signature verification
+enabled; signatures authenticate payloads but do not encrypt them. The current
+worker requires HTTPS URLs for preview deployment results.
+
+### Troubleshooting encountered during setup
+
+**Sudo asks for a password even though no password was set.** Test
+`sudo -n true`. If it succeeds but `sudo -n -v` requires interactive
+authentication, command execution and timestamp validation have different sudo
+policies. The updated installer checks `sudo true`, not `sudo -v`. Pull the
+latest code and retry; setting a root password or running `chmod` is not the fix.
+
+**Commands appear to produce no output.** Directory creation with `install -d`
+normally succeeds silently, but `id` and `node --version` should print output.
+In this setup, stdout was not reaching the terminal while stderr still worked.
+Diagnose this in the interactive shell:
+
+```bash
+printf 'STDOUT TEST\n'
+printf 'STDERR TEST\n' >&2
+/usr/bin/id lrai-agent 1>&2
+```
+
+If only stderr is visible, restore stdout to the current terminal and retest:
+
+```bash
+exec 1>/dev/tty
+printf 'Output is back!\n'
+```
+
+This changes the current shell's output routing. If neither stream is visible,
+try a fresh SSH connection outside tmux. Do not repeatedly reinstall packages
+just because output is missing.
+
 ## Initial runtime installer
 
 On a fresh Linux VM with Node.js 22+, npm, Git, and sudo installed, clone this
