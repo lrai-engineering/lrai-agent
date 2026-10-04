@@ -2,6 +2,32 @@
 
 These are operator-run instructions for a Linux/systemd host. Complete [Prerequisites](Prerequisites.md) first. The portable worker setup below does not install a GitHub Actions runner.
 
+## Initial runtime installer
+
+On a fresh Linux VM with Node.js 22+, npm, Git, and sudo installed, clone this
+repository and run the following as your normal user:
+
+```bash
+git clone https://github.com/lrai-engineering/lrai-agent.git
+cd lrai-agent
+bash scripts/install-runtime.sh
+```
+
+If already cloned, run only the last command from the checkout. The installer
+runs `npm ci` and `npm run check`, creates the dedicated service account and
+directories, installs Node and a real package under `/opt/lrai-agent`, and checks
+CLI access as the service user. It preserves existing secrets and queued tasks
+and refuses an existing runtime rather than upgrading it in place. Dependency
+lifecycle scripts run as your normal user; the privileged package installation
+disables them.
+
+This replaces section 1 and the runtime build/install portion of section 2 below.
+Continue with the Bubblewrap and pinned package-manager requirements at the end
+of section 2, then sections 3 onward. Provider authentication, GitHub App
+credentials, systemd services, HTTPS, and preview deployment are separate steps;
+the installer does not configure or start them. Use the manual instructions below
+when you need to inspect or customize each step.
+
 ## 1. Create the service account and directories
 
 On a new host, first check `id lrai-agent`. If the account does not exist:
