@@ -22,7 +22,7 @@ describe("initial runtime installer", () => {
       writeFileSync(path.join(fixture, "sudo"), `#!/bin/bash
 printf '%s\\n' "$*" >> "$INSTALLER_TEST_LOG"
 case "$1" in
-  -v) exit 0 ;;
+  true) exit 0 ;;
   test) exit 0 ;;
   *) exit 99 ;;
 esac
@@ -34,7 +34,7 @@ esac
       });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Existing runtime detected");
-      expect(readFileSync(log, "utf8")).toBe("-v\ntest -e /opt/lrai-agent/bin/node\n");
+      expect(readFileSync(log, "utf8")).toBe("true\ntest -e /opt/lrai-agent/bin/node\n");
     } finally { rmSync(fixture, { recursive: true, force: true }); }
   });
 
@@ -45,7 +45,7 @@ esac
       writeFileSync(path.join(fixture, "sudo"), `#!/bin/bash
 printf '%s\\n' "$*" >> "$INSTALLER_TEST_LOG"
 case "$1" in
-  -v) exit 0 ;;
+  true) exit 0 ;;
   test) exit 1 ;;
   *) exit 99 ;;
 esac
@@ -62,7 +62,7 @@ exit 42
       expect(result.status).toBe(42);
       expect(result.stderr).toContain("validation failed");
       expect(readFileSync(log, "utf8")).toBe(
-        "-v\ntest -e /opt/lrai-agent/bin/node\ntest -e /opt/lrai-agent/lib/node_modules/@lrai-engineering/lrai-agent\n",
+        "true\ntest -e /opt/lrai-agent/bin/node\ntest -e /opt/lrai-agent/lib/node_modules/@lrai-engineering/lrai-agent\n",
       );
     } finally { rmSync(fixture, { recursive: true, force: true }); }
   });

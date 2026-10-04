@@ -36,7 +36,9 @@ node_binary=$(readlink -f -- "$(command -v node)")
 npm_binary=$(readlink -f -- "$(command -v npm)")
 cd "$repo"
 
-sudo -v
+# Check an actual command: sudo's timestamp-validation policy can require a
+# password even when commands are permitted through NOPASSWD (for example EC2).
+sudo true
 assert_fresh_runtime() {
   if sudo test -e /opt/lrai-agent/bin/node ||
      sudo test -e /opt/lrai-agent/lib/node_modules/@lrai-engineering/lrai-agent; then
