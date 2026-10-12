@@ -22,6 +22,8 @@ export interface FetchAttachmentsOptions {
   workingDirectory: string;
   manifestPath: string;
   token?: string;
+  /** Signed download URLs keyed by asset UUID; see signedAttachmentUrls. */
+  signedUrls?: Map<string, string>;
   fetch?: FetchFunction;
 }
 
@@ -82,6 +84,33 @@ function isDownloadHost(url: URL): boolean {
       url.hostname,
     )
   );
+}
+
+const ASSET_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/iu;
+
+function assetId(url: URL): string | undefined {
+  return url.pathname.match(ASSET_ID)?.[0].toLowerCase();
+}
+
+/**
+ * Private-repository `github.com/user-attachments/assets/<uuid>` links return
+ * 404 to API tokens; only a browser session can follow them. The REST API's
+ * rendered `body_html` carries short-lived signed
+ * `private-user-images.githubusercontent.com/...-<uuid>.png?jwt=` URLs instead,
+ * so map each asset UUID to its signed URL.
+ */
+export function signedAttachmentUrls(html: string): Map<string, string> {
+  const signed = new Map<string, string>();
+  for (const match of html.matchAll(/https:\/\/private-user-images\.githubusercontent\.com\/[^\s<>"']+/giu)) {
+    try {
+      const url = new URL(match[0].replaceAll("&amp;", "&"));
+      const id = assetId(url);
+      if (id !== undefined && url.searchParams.has("jwt") && !signed.has(id)) signed.set(id, url.href);
+    } catch {
+      // Ignore malformed markup.
+    }
+  }
+  return signed;
 }
 
 export function extractAttachmentUrls(body: string): string[] {
@@ -282,7 +311,9 @@ export async function fetchIssueAttachments(
   const fetchFunction = options.fetch ?? globalThis.fetch;
 
   for (const [index, url] of urls.entries()) {
-    const downloaded = await fetchAttachment(url, options.token, fetchFunction);
+    const id = assetId(new URL(url));
+    const signedUrl = id === undefined ? undefined : options.signedUrls?.get(id);
+    const downloaded = await fetchAttachment(signedUrl ?? url, options.token, fetchFunction);
     totalSize += downloaded.data.length;
     if (totalSize > MAX_TOTAL_BYTES) {
       throw new Error("GitHub attachments exceed 30 MiB total limit");

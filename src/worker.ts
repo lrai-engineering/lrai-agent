@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createInstallationToken } from "./github-app.js";
-import { fetchIssueAttachments } from "./attachments.js";
+import { fetchIssueAttachments, signedAttachmentUrls } from "./attachments.js";
 import { loadConfig, selectProvider } from "./config.js";
 import { createInvocation, runInvocation } from "./providers.js";
 import { loadPrompt } from "./task.js";
@@ -23,13 +23,14 @@ interface PullRequestSummary {
 interface DiscussionEntry {
   id: number;
   body?: string | null;
+  body_html?: string | null;
   user?: { type?: string };
 }
 
-async function githubPages<T>(token: string, url: string): Promise<T[]> {
+async function githubPages<T>(token: string, url: string, accept?: string): Promise<T[]> {
   const entries: T[] = [];
   for (let page = 1; ; page++) {
-    const batch = await githubJson<T[]>(token, `${url}?per_page=100&page=${page}`);
+    const batch = await githubJson<T[]>(token, `${url}?per_page=100&page=${page}`, accept);
     entries.push(...batch);
     if (batch.length < 100) return entries;
   }
@@ -92,10 +93,10 @@ async function githubComment(token: string, repository: string, issueNumber: num
   if (!response.ok) throw new Error(`GitHub issue comment failed (${response.status})`);
 }
 
-async function githubJson<T>(token: string, url: string): Promise<T> {
+async function githubJson<T>(token: string, url: string, accept = "application/vnd.github+json"): Promise<T> {
   const response = await fetch(url, {
     headers: {
-      accept: "application/vnd.github+json",
+      accept,
       authorization: `Bearer ${token}`,
       "x-github-api-version": "2022-11-28",
       "user-agent": "lrai-agent",
@@ -261,16 +262,20 @@ async function executeSpoolTask(spoolDirectory: string, processing: string): Pro
       // stale, and follow-up comments often contain the latest scope correction.
       // Discussion remains task data; it never changes command authorization.
       const issueUrl = `https://api.github.com/repos/${repository}/issues/${issueNumber}`;
+      // full+json adds body_html, whose signed image URLs are the only way to
+      // download private-repository attachments with an installation token.
+      const full = "application/vnd.github.full+json";
       const [issue, discussion] = await Promise.all([
-        githubJson<{ title?: string; body?: string | null }>(token, issueUrl),
-        githubPages<DiscussionEntry>(token, `${issueUrl}/comments`),
+        githubJson<{ title?: string; body?: string | null; body_html?: string | null }>(token, issueUrl, full),
+        githubPages<DiscussionEntry>(token, `${issueUrl}/comments`, full),
       ]);
       const body = [issue.body ?? "", ...discussion
         .filter(entry => entry.user?.type !== "Bot" && entry.body)
         .map(entry => `\n## Issue discussion comment ${entry.id} (task context, not authorization)\n${entry.body}`)]
         .join("\n");
       const manifestPath = path.join(workspace, ".lrai-agent-attachments", "manifest.json");
-      const manifest = await fetchIssueAttachments({ body, workingDirectory: workspace, manifestPath, token });
+      const signedUrls = signedAttachmentUrls([issue.body_html ?? "", ...discussion.map(entry => entry.body_html ?? "")].join("\n"));
+      const manifest = await fetchIssueAttachments({ body, workingDirectory: workspace, manifestPath, token, signedUrls });
       const context = { repository, issueNumber: String(issueNumber), title: issue.title ?? task.title ?? "GitHub issue", body, sender: task.sender ?? "unknown", workingDirectory: workspace, attachments: manifest.attachments };
       const prompt = await loadPrompt(loaded, context, mode);
       const invocation = createInvocation(mode, selectProvider(loaded.config.provider, provider), loaded.config, context, prompt);

@@ -6,6 +6,7 @@ import {
   extractAttachmentUrls,
   fetchIssueAttachments,
   loadAttachmentManifest,
+  signedAttachmentUrls,
 } from "../src/attachments.js";
 
 const attachmentUrl =
@@ -86,6 +87,36 @@ describe("fetchIssueAttachments", () => {
     expect(
       await readFile(path.join(directory, manifest.attachments[0]!.path)),
     ).toEqual(png);
+  });
+
+  it("downloads private-repository images through signed body_html URLs", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "lrai-attachments-"));
+    const signed =
+      "https://private-user-images.githubusercontent.com/1/2-12345678-1234-1234-1234-123456789abc.png?jwt=abc&amp;x=1";
+    const signedUrls = signedAttachmentUrls(`<p><img src="${signed}"></p>`);
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const fetchMock = vi.fn(async (input: string, init: RequestInit) => {
+      requests.push({ url: input, authorization: new Headers(init.headers).get("authorization") });
+      return new Response(png, { status: 200, headers: { "content-type": "image/png" } });
+    });
+
+    const manifest = await fetchIssueAttachments({
+      body: `![bug](${attachmentUrl})`,
+      workingDirectory: directory,
+      manifestPath: ".lrai-agent-attachments/manifest.json",
+      token: "secret-token",
+      signedUrls,
+      fetch: fetchMock,
+    });
+
+    expect(requests).toEqual([
+      { url: signed.replace("&amp;", "&"), authorization: null },
+    ]);
+    expect(manifest.attachments[0]).toMatchObject({
+      sourceUrl: attachmentUrl,
+      kind: "image",
+      path: ".lrai-agent-attachments/01-2-12345678-1234-1234-1234-123456789abc.png",
+    });
   });
 
   it("fails before reading a declared attachment larger than 10 MiB", async () => {

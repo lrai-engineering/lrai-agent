@@ -17,7 +17,7 @@ vi.mock("../src/config.js", () => ({ loadConfig: vi.fn(async () => ({ config: { 
 vi.mock("../src/workspace-validation.js", () => ({ prepareWorkspace: vi.fn(), validateWorkspace: vi.fn() }));
 vi.mock("../src/providers.js", () => ({ createInvocation: vi.fn(() => ({})), runInvocation: vi.fn() }));
 vi.mock("../src/task.js", () => ({ loadPrompt: vi.fn(async () => "Implement task") }));
-vi.mock("../src/attachments.js", () => ({ fetchIssueAttachments: vi.fn(async () => ({ attachments: [] })) }));
+vi.mock("../src/attachments.js", () => ({ fetchIssueAttachments: vi.fn(async () => ({ attachments: [] })), signedAttachmentUrls: vi.fn(() => new Map()) }));
 
 const pr = { number: 3, title: "Preview", html_url: "https://github.com/lukasijus/calify/pull/3", state: "open", body: "Closes #2", head: { ref: "agent/issue-2-test", sha: "a".repeat(40) } };
 const url = "https://jetson.tail68fd31.ts.net/calify-pr-3";
