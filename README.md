@@ -105,13 +105,13 @@ the explicit `LRAI_CONFIG` file. See
 
 ## Phone-friendly GitHub issue workflow
 
-GitHub worker implementation runs prepare pnpm dependencies before invoking the
-agent, refresh lockfiles afterward, and require sandboxed lint/test/build checks
+GitHub worker implementation runs prepare dependencies before invoking the
+agent, refresh lockfiles afterward, and require sandboxed policy-specific checks
 before preview deployment. One automatic repair attempt is allowed; a remaining
 failure preserves the draft PR and skips deployment. The worker requires an
-operator-installed pnpm version matching the project and Bubblewrap; see the
-[VM setup](docs/wiki/VM-Setup.md). Other package managers need an explicit worker
-adapter. Local CLI commands retain their existing bounded behavior.
+operator-installed package manager and Bubblewrap; see the
+[VM setup](docs/wiki/VM-Setup.md). The default policy requires pinned pnpm;
+`lukasijus/lukasrimkus_me` has the explicit npm policy documented below. Local CLI commands retain their existing bounded behavior.
 
 A consuming repository can copy
 [`templates/github/agent-issue.yml`](templates/github/agent-issue.yml), replace
@@ -258,3 +258,26 @@ Implementation and planning jobs refresh the issue body and include human issue
 comments when execution starts, so follow-up scope corrections reach the model.
 Bot comments are excluded. Discussion is task context only and cannot grant
 command or deployment authorization.
+
+### Site npm validation policy
+
+The worker has an explicit npm policy for the authorized repository identity
+`lukasijus/lukasrimkus_me`. It requires host npm 11.11.1 and a regular
+`package-lock.json`; an optional packageManager field must match that version.
+Dependency preparation runs `npm ci --ignore-scripts` in the network-enabled
+Bubblewrap sandbox. Lockfile repair uses `npm install --package-lock-only`
+with scripts disabled, followed by a clean frozen install. The required
+`typecheck` and `build` scripts run offline, with npm pre/post hooks disabled.
+Other repositories retain the pinned pnpm policy. Repository names inside
+package.json and repository configuration cannot select this exception.
+
+### Site PR previews
+
+The host worker maps `lukasijus/lukasrimkus_me` to app `lukasrimkusme` when
+`preview.app` is absent; conflicting configuration is rejected. The installed
+preview deployer allows only the explicit Calify and personal-site repository/app
+pairs. Site PRs build with `VITE_BASE_PATH=/lukasrimkusme-pr-N/` and run on the
+gateway network with no published ports or host mounts. Repository Compose files
+are not used for site previews. The gateway strips the preview prefix, while the
+site build supplies prefixed asset and navigation URLs. Exact SHA/context reuse
+and local plus Tailscale health checks also apply to the site.

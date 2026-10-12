@@ -4,8 +4,8 @@ set -Eeuo pipefail
 trap 'status=$?; echo "preview deployer failed at line $LINENO (exit $status)" >&2; exit "$status"' ERR
 
 # This script is intended to be installed root-owned and invoked through a
-# narrow sudoers rule. It deliberately supports only the known Calify target
-# until each other application has an equivalent preview contract.
+# narrow sudoers rule. Only explicitly paired repository/application targets
+# below have a deployment contract.
 
 usage() {
   echo "usage: $0 --repository owner/repo --pull-request N --ref REF --sha SHA --app APP --context-sha SHA256" >&2
@@ -30,8 +30,10 @@ while (($# > 0)); do
   esac
 done
 
-[[ "$repository" == "lukasijus/calify" ]] || { echo "preview repository is not allowlisted" >&2; exit 1; }
-[[ "$app" == "calify" ]] || { echo "preview app is not allowlisted" >&2; exit 1; }
+case "$repository:$app" in
+  lukasijus/calify:calify|lukasijus/lukasrimkus_me:lukasrimkusme) ;;
+  *) echo "preview repository/app pair is not allowlisted" >&2; exit 1 ;;
+esac
 [[ "$pull_request" =~ ^[1-9][0-9]*$ ]] || { echo "invalid pull request number" >&2; exit 1; }
 [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "invalid git ref" >&2; exit 1; }
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid commit SHA" >&2; exit 1; }
@@ -44,13 +46,13 @@ export DOCKER_CONFIG="${DOCKER_CONFIG:-/var/lib/lrai-agent/.docker}"
 mkdir -p "$DOCKER_CONFIG"
 
 preview_root=/var/lib/lrai-agent/previews
-target_root="$preview_root/apps/calify"
+target_root="$preview_root/apps/$app"
 mkdir -p "$target_root" "$preview_root/gateway"
 # Serialize the shared gateway configuration as well as deployments of one PR.
 exec 9>"$preview_root/.deploy.lock"
 flock -x 9
-route="/calify-pr-$pull_request"
-project="calify-pr-$pull_request"
+route="/$app-pr-$pull_request"
+project="$app-pr-$pull_request"
 container="$project"
 local_url="http://127.0.0.1:8090$route"
 url="https://jetson.tail68fd31.ts.net$route"
@@ -61,8 +63,8 @@ existing_sha=$(docker inspect --format '{{ index .Config.Labels "com.lrai-agent.
 existing_status=$(docker inspect --format '{{ .State.Status }}' "$container" 2>/dev/null || true)
 existing_context=$(cat "$state_file" 2>/dev/null || true)
 if [[ "$existing_repository" == "$repository" && "$existing_pull_request" == "$pull_request" && "$existing_sha" == "$sha" && "$existing_context" == "$context_sha" && "$existing_status" == "running" ]] &&
-  curl --fail --silent --show-error --max-time 10 "$local_url" >/dev/null 2>&1 &&
-  curl --fail --silent --show-error --max-time 10 "$url" >/dev/null 2>&1; then
+  curl --location --fail --silent --show-error --max-time 10 "$local_url" >/dev/null 2>&1 &&
+  curl --location --fail --silent --show-error --max-time 10 "$url" >/dev/null 2>&1; then
   printf '{"status":"unchanged","url":"%s"}\n' "$url"
   exit 0
 fi
@@ -95,6 +97,24 @@ GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" git clone --quiet --branch "$ref" -
 actual_sha=$(git -C "$staging" rev-parse HEAD)
 [[ "$actual_sha" == "$sha" ]] || { echo "checked-out ref does not match requested commit" >&2; exit 1; }
 
+if [[ "$app" == "lukasrimkusme" ]]; then
+  # Use a fixed runtime contract, never repository Compose (host mounts,
+  # privileges and Docker sockets must not come from a task checkout).
+  docker build --build-arg "VITE_BASE_PATH=$route/" -t "lrai-preview-$project:$sha" "$staging" >"$compose_log" 2>&1 || { tail -n 40 "$compose_log" >&2; exit 1; }
+  if docker inspect "$container" >/dev/null 2>&1; then
+    docker rm -f "$container" >>"$compose_log" 2>&1
+  fi
+  docker run -d --name "$container" --restart unless-stopped \
+    --network jetson-app-gateway_default \
+    --label "com.lrai-agent.preview.repository=$repository" \
+    --label "com.lrai-agent.preview.pull-request=$pull_request" \
+    --label "com.lrai-agent.preview.sha=$sha" \
+    "lrai-preview-$project:$sha" >>"$compose_log" 2>&1
+  if ! docker exec "$container" cat /usr/share/nginx/html/index.html | grep -Fq "$route/assets/"; then
+    echo "Preview basePath mismatch: expected Vite assets under $route/" >&2
+    exit 1
+  fi
+else
 override="$staging/.preview-compose.yaml"
 cat >"$override" <<COMPOSE
 services:
@@ -139,6 +159,7 @@ if [[ "$actual_base_path" != "$route" ]]; then
   echo "Preview basePath mismatch: built '$actual_base_path', expected '$route'. Declare ARG CALIFY_BASE_PATH in the Docker builder and read process.env.CALIFY_BASE_PATH in next.config.ts; fix the PR before retrying." >&2
   exit 1
 fi
+fi
 mkdir -p "$target_root"
 rm -rf -- "$target_root/current"
 mv -- "$staging" "$target_root/current"
@@ -148,6 +169,21 @@ route_dir="$preview_root/gateway/routes"
 route_file="$route_dir/$project.conf"
 routes_file="$preview_root/gateway/previews.conf"
 mkdir -p "$route_dir"
+if [[ "$app" == "lukasrimkusme" ]]; then
+  cat >"$route_file" <<NGINX
+location = $route {
+  return 308 $route/;
+}
+location ^~ $route/ {
+  proxy_pass http://$container:80/;
+  proxy_http_version 1.1;
+  proxy_set_header Host \$host;
+  proxy_set_header X-Real-IP \$remote_addr;
+  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto \$upstream_forwarded_proto;
+}
+NGINX
+else
 cat >"$route_file" <<NGINX
 location = $route {
   proxy_pass http://$container:80;
@@ -169,6 +205,8 @@ location ^~ $route/ {
   proxy_set_header X-Forwarded-Proto \$upstream_forwarded_proto;
 }
 NGINX
+
+fi
 
 routes_tmp=$(mktemp "$preview_root/gateway/.previews.XXXXXX")
 for route_config in "$route_dir"/*.conf; do
@@ -211,8 +249,8 @@ if [[ "$deployed_sha" != "$sha" || "$deployed_status" != "running" ]]; then
 fi
 
 for attempt in $(seq 1 30); do
-  if curl --fail --silent --show-error --max-time 5 "$local_url" >/dev/null 2>&1 &&
-    curl --fail --silent --show-error --max-time 5 "$url" >/dev/null 2>&1; then
+  if curl --location --fail --silent --show-error --max-time 5 "$local_url" >/dev/null 2>&1 &&
+    curl --location --fail --silent --show-error --max-time 5 "$url" >/dev/null 2>&1; then
     state_tmp=$(mktemp "$target_root/.context.XXXXXX")
     printf '%s\n' "$context_sha" >"$state_tmp"
     mv -- "$state_tmp" "$state_file"

@@ -40,6 +40,10 @@ if [[ "$1" == inspect ]]; then
     *State.Status*) echo running ;;
     *Aliases*) if [[ "$TEST_SHARED_ALIAS" == 1 ]]; then echo '["calify-pr-3","calify"]'; else echo '[]'; fi ;;
   esac
+elif [[ "$1" == build ]]; then
+  touch "$TEST_ROOT/built"
+elif [[ "$1" == exec && "$*" == *"cat /usr/share/nginx/html/index.html"* ]]; then
+  echo '<script src="/lukasrimkusme-pr-3/assets/index.js"></script>'
 elif [[ "$1" == exec && "$*" == *required-server-files.json* ]]; then
   echo "\${TEST_BASE_PATH:-/calify-pr-3}"
 elif [[ "$1" == exec && "$*" == *"cat /etc/nginx/previews.conf"* ]]; then
@@ -61,11 +65,29 @@ exit 0
 
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
-async function deploy(requestedSha = sha, requestedContext = context) {
-  return exec("bash", [path.join(root, "deploy.sh"), "--repository", "lukasijus/calify", "--pull-request", "3", "--ref", "agent/issue-2-test", "--sha", requestedSha, "--app", "calify", "--context-sha", requestedContext], { env });
+async function deploy(requestedSha = sha, requestedContext = context, repository = "lukasijus/calify", app = "calify") {
+  return exec("bash", [path.join(root, "deploy.sh"), "--repository", repository, "--pull-request", "3", "--ref", "agent/issue-2-test", "--sha", requestedSha, "--app", app, "--context-sha", requestedContext], { env });
 }
 
 describe("Jetson preview deployer", () => {
+  it("deploys the site with a fixed runtime and strips the preview path", async () => {
+    const result = await deploy(sha, context, "lukasijus/lukasrimkus_me", "lukasrimkusme");
+    expect(JSON.parse(result.stdout)).toEqual({ status: "deployed", url: "https://jetson.tail68fd31.ts.net/lukasrimkusme-pr-3" });
+    const calls = await readFile(path.join(root, "calls"), "utf8");
+    expect(calls).toContain("VITE_BASE_PATH=/lukasrimkusme-pr-3/");
+    expect(calls).toContain("--network jetson-app-gateway_default");
+    expect(calls).not.toContain(".preview-compose.yaml");
+    expect(calls).not.toContain("required-server-files.json");
+    const route = await readFile(path.join(root, "previews/gateway/routes/lukasrimkusme-pr-3.conf"), "utf8");
+    expect(route).toContain("return 308 /lukasrimkusme-pr-3/;");
+    expect(route).toContain("proxy_pass http://lukasrimkusme-pr-3:80/;");
+  });
+
+  it("rejects mismatched repository and app identities before invoking tools", async () => {
+    await expect(deploy(sha, context, "lukasijus/calify", "lukasrimkusme")).rejects.toMatchObject({ stderr: expect.stringContaining("pair is not allowlisted") });
+    await expect(readFile(path.join(root, "calls"), "utf8")).rejects.toThrow();
+  });
+
   it("reports a hardcoded base path without retrying impossible health checks", async () => {
     env.TEST_BASE_PATH = "/calify";
     await expect(deploy()).rejects.toMatchObject({ stderr: expect.stringContaining("Preview basePath mismatch") });

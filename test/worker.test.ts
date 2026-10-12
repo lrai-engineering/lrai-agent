@@ -98,6 +98,17 @@ function contextSha() {
 }
 
 describe("preview worker", () => {
+  it("uses the host-owned site mapping without repository preview config", async () => {
+    await deployPreview("test-token", "lukasijus/lukasrimkus_me", undefined, pr, "b".repeat(64));
+    expect(calls.at(-1)?.args).toContain("lukasrimkusme");
+  });
+
+  it("rejects a conflicting site app and does not infer apps for other repositories", async () => {
+    await expect(deployPreview("test-token", "lukasijus/lukasrimkus_me", "calify", pr, "b".repeat(64))).rejects.toThrow("does not match");
+    await expect(deployPreview("test-token", "someone/other", undefined, pr, "b".repeat(64))).rejects.toThrow("preview.app is required");
+    expect(calls).toHaveLength(0);
+  });
+
   it("refreshes queued issue text and includes human scope corrections, excluding bot output", async () => {
     issueBody = "Current issue body";
     comments = [{ id: 2, body: "Only one weight graph", user: { type: "User" } },
@@ -125,7 +136,7 @@ describe("preview worker", () => {
     vi.mocked(validateWorkspace).mockRejectedValueOnce(new Error("type error"));
     await writeFile(path.join(spool, "delivery.json"), JSON.stringify({ delivery: "delivery", repository: "lukasijus/calify", installationId: 10, issueNumber: 2, command: "codex", deployPreview: true }));
     await processSpoolTask(spool, "delivery.json");
-    expect(prepareWorkspace).toHaveBeenNthCalledWith(1, workspace);
+    expect(prepareWorkspace).toHaveBeenNthCalledWith(1, workspace, false, "lukasijus/calify");
     expect(runInvocation).toHaveBeenCalledTimes(2);
     expect(validateWorkspace).toHaveBeenCalledTimes(2);
     expect(published.join("\n")).toContain("Passed lint, test, build");

@@ -162,6 +162,12 @@ async function findLatestAgentPullRequest(token: string, repository: string, iss
 }
 
 export async function deployPreview(token: string, repository: string, app: string | undefined, pullRequest: PullRequestSummary, contextSha: string): Promise<PreviewResult> {
+  // Host-owned mapping for the existing npm site, including PRs created before
+  // preview configuration existed. Other repositories still require config.
+  if (repository === "lukasijus/lukasrimkus_me") {
+    if (app !== undefined && app !== "lukasrimkusme") throw new Error("preview.app does not match the site deployment policy");
+    app = "lukasrimkusme";
+  }
   if (app === undefined) throw new Error("preview.app is required for deploy tasks");
   const command = process.env.LRAI_PREVIEW_DEPLOY_COMMAND === undefined
     ? [required(process.env.LRAI_PREVIEW_DEPLOY_EXECUTABLE, "LRAI_PREVIEW_DEPLOY_EXECUTABLE")]
@@ -245,12 +251,12 @@ async function executeSpoolTask(spoolDirectory: string, processing: string): Pro
       pullRequest = await findLatestAgentPullRequest(token, repository, issueNumber);
       await runGit(["fetch", "origin", pullRequest.head.sha], workspace, token);
       await runGit(["checkout", "--detach", pullRequest.head.sha], workspace, token);
-      await prepareWorkspace(workspace);
-      await validateWorkspace(workspace);
+      await prepareWorkspace(workspace, false, repository);
+      await validateWorkspace(workspace, repository);
     } else {
       // Prepare before spending a model run: installed framework docs and tools
       // must be available even though the provider's sandbox stays offline.
-      if (mode === "implement") await prepareWorkspace(workspace);
+      if (mode === "implement") await prepareWorkspace(workspace, false, repository);
       // Refresh content when the job actually starts: queued snapshots can be
       // stale, and follow-up comments often contain the latest scope correction.
       // Discussion remains task data; it never changes command authorization.
@@ -276,9 +282,9 @@ async function executeSpoolTask(spoolDirectory: string, processing: string): Pro
       if (mode === "implement") {
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            await prepareWorkspace(workspace, true);
-            await prepareWorkspace(workspace);
-            validationSummary = await validateWorkspace(workspace);
+            await prepareWorkspace(workspace, true, repository);
+            await prepareWorkspace(workspace, false, repository);
+            validationSummary = await validateWorkspace(workspace, repository);
             validationFailure = undefined;
             break;
           } catch (error) {
