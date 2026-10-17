@@ -65,4 +65,4 @@ systemctl restart lrai-agent-webhook.service
 systemctl restart lrai-agent-worker.service
 systemctl restart lrai-jetson-preview.service
 
-echo "Preview deployer installed. The worker now accepts deploy labels for allowlisted Calify previews."
+echo "Preview deployer installed. The worker now accepts deploy labels for allowlisted previews (Calify, personal site, camera monitor)."
