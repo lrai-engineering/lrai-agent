@@ -30,6 +30,8 @@ if test -z "$node_bin" || test -z "$npm_bin"; then
   echo "Node.js/npm were not found; install Node.js/npm or expose them in PATH" >&2
   exit 1
 fi
+# sudo's PATH lacks nvm, and npm runs through `#!/usr/bin/env node`.
+export PATH="$(dirname "$node_bin"):$PATH"
 
 # Installing a local directory with npm creates a symlink. That is not
 # readable by the hardened systemd unit because it points into /home/luke.
