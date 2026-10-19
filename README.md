@@ -275,9 +275,21 @@ package.json and repository configuration cannot select this exception.
 
 The host worker maps `lukasijus/lukasrimkus_me` to app `lukasrimkusme` when
 `preview.app` is absent; conflicting configuration is rejected. The installed
-preview deployer allows only the explicit Calify and personal-site repository/app
-pairs. Site PRs build with `VITE_BASE_PATH=/lukasrimkusme-pr-N/` and run on the
+preview deployer allows only the explicit Calify, personal-site and camera-monitor
+repository/app pairs. Site PRs build with `VITE_BASE_PATH=/lukasrimkusme-pr-N/` and run on the
 gateway network with no published ports or host mounts. Repository Compose files
 are not used for site previews. The gateway strips the preview prefix, while the
 site build supplies prefixed asset and navigation URLs. Exact SHA/context reuse
 and local plus Tailscale health checks also apply to the site.
+
+### Camera monitor PR previews
+
+`lukasijus/alwayslike-pi` sets `preview.app: alwayslike-pi`. The deployer
+builds the repository `Dockerfile` (`CAMERA_RELEASE=<sha>`) and runs it on the
+gateway network as a read-only container with all capabilities dropped,
+`no-new-privileges` and a 256 MiB limit. It always uses
+`CAMERA_SOURCE=relay RELAY_URL=http://100.64.108.121:8080`, so the preview
+shows real frames by viewing the live Pi's streams at 1 fps. It never deploys
+to the Pi or opens camera hardware; the repository cannot change those
+settings. The gateway strips `/alwayslike-pi-pr-N/` (the monitor uses relative
+URLs) and does not buffer the MJPEG streams.

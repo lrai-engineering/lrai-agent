@@ -83,6 +83,20 @@ describe("Jetson preview deployer", () => {
     expect(route).toContain("proxy_pass http://lukasrimkusme-pr-3:80/;");
   });
 
+  it("deploys the camera monitor as a hardened relay of the live Pi, never its hardware", async () => {
+    const result = await deploy(sha, context, "lukasijus/alwayslike-pi", "alwayslike-pi");
+    expect(JSON.parse(result.stdout)).toEqual({ status: "deployed", url: "https://jetson.tail68fd31.ts.net/alwayslike-pi-pr-3" });
+    const calls = await readFile(path.join(root, "calls"), "utf8");
+    expect(calls).toContain(`CAMERA_RELEASE=${sha}`);
+    expect(calls).toContain("-e CAMERA_SOURCE=relay -e RELAY_URL=http://100.64.108.121:8080");
+    expect(calls).toContain("--read-only --cap-drop ALL");
+    expect(calls).not.toContain(".preview-compose.yaml");
+    const route = await readFile(path.join(root, "previews/gateway/routes/alwayslike-pi-pr-3.conf"), "utf8");
+    expect(route).toContain("return 308 /alwayslike-pi-pr-3/;");
+    expect(route).toContain("proxy_pass http://alwayslike-pi-pr-3:8080/;");
+    expect(route).toContain("proxy_buffering off;");
+  });
+
   it("rejects mismatched repository and app identities before invoking tools", async () => {
     await expect(deploy(sha, context, "lukasijus/calify", "lukasrimkusme")).rejects.toMatchObject({ stderr: expect.stringContaining("pair is not allowlisted") });
     await expect(readFile(path.join(root, "calls"), "utf8")).rejects.toThrow();

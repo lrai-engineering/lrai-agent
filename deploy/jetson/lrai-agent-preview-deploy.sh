@@ -31,7 +31,7 @@ while (($# > 0)); do
 done
 
 case "$repository:$app" in
-  lukasijus/calify:calify|lukasijus/lukasrimkus_me:lukasrimkusme) ;;
+  lukasijus/calify:calify|lukasijus/lukasrimkus_me:lukasrimkusme|lukasijus/alwayslike-pi:alwayslike-pi) ;;
   *) echo "preview repository/app pair is not allowlisted" >&2; exit 1 ;;
 esac
 [[ "$pull_request" =~ ^[1-9][0-9]*$ ]] || { echo "invalid pull request number" >&2; exit 1; }
@@ -114,6 +114,21 @@ if [[ "$app" == "lukasrimkusme" ]]; then
     echo "Preview basePath mismatch: expected Vite assets under $route/" >&2
     exit 1
   fi
+elif [[ "$app" == "alwayslike-pi" ]]; then
+  # Never the camera hardware: the preview only views the live Pi's streams
+  # (CAMERA_SOURCE=relay). The Pi itself is deployed by hand over SSH.
+  docker build --build-arg "CAMERA_RELEASE=$sha" -t "lrai-preview-$project:$sha" "$staging" >"$compose_log" 2>&1 || { tail -n 40 "$compose_log" >&2; exit 1; }
+  if docker inspect "$container" >/dev/null 2>&1; then
+    docker rm -f "$container" >>"$compose_log" 2>&1
+  fi
+  docker run -d --name "$container" --restart unless-stopped \
+    --network jetson-app-gateway_default \
+    --read-only --cap-drop ALL --security-opt no-new-privileges --memory 256m \
+    -e CAMERA_SOURCE=relay -e RELAY_URL=http://100.64.108.121:8080 \
+    --label "com.lrai-agent.preview.repository=$repository" \
+    --label "com.lrai-agent.preview.pull-request=$pull_request" \
+    --label "com.lrai-agent.preview.sha=$sha" \
+    "lrai-preview-$project:$sha" >>"$compose_log" 2>&1
 else
 override="$staging/.preview-compose.yaml"
 cat >"$override" <<COMPOSE
@@ -177,6 +192,24 @@ location = $route {
 location ^~ $route/ {
   proxy_pass http://$container:80/;
   proxy_http_version 1.1;
+  proxy_set_header Host \$host;
+  proxy_set_header X-Real-IP \$remote_addr;
+  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto \$upstream_forwarded_proto;
+}
+NGINX
+elif [[ "$app" == "alwayslike-pi" ]]; then
+  # MJPEG streams: no buffering, and keep long-lived responses open.
+  cat >"$route_file" <<NGINX
+location = $route {
+  return 308 $route/;
+}
+location ^~ $route/ {
+  proxy_pass http://$container:8080/;
+  proxy_http_version 1.1;
+  proxy_buffering off;
+  proxy_cache off;
+  proxy_read_timeout 30s;
   proxy_set_header Host \$host;
   proxy_set_header X-Real-IP \$remote_addr;
   proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;

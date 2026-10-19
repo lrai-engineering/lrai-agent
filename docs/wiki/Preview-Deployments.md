@@ -2,7 +2,7 @@
 
 ## Scope of the supplied deployer
 
-The shipped script accepts only repository `lukasijus/calify` and app `calify`. It also depends on the existing Jetson gateway checkout at `/home/luke/jetson-app-gateway`, its Compose service, the external Docker network `calify_default`, and Calify's `compose.yaml` service/build contract.
+The shipped script accepts repository `lukasijus/calify` with app `calify`, `lukasijus/lukasrimkus_me` with `lukasrimkusme`, and `lukasijus/alwayslike-pi` with `alwayslike-pi`. The camera monitor preview is a hardened relay of the live Pi's streams and never touches camera hardware (see the README's "Camera monitor PR previews"). The rest of this page describes the Calify contract. It also depends on the existing Jetson gateway checkout at `/home/luke/jetson-app-gateway`, its Compose service, the external Docker network `calify_default`, and Calify's `compose.yaml` service/build contract.
 
 A different VM or application needs an explicitly implemented deployment adapter. Setting `preview.app: another-app` does not create that support.
 
