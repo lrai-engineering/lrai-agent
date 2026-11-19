@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { sandboxArgs, validationPolicy } from "../src/workspace-validation.js";
+import { NUGET_DIRECTORY, PASSWD_FILE, sandboxArgs, validationPolicy } from "../src/workspace-validation.js";
 import { providerEnvironment } from "../src/providers.js";
 
 describe("worker isolation", () => {
@@ -53,13 +53,13 @@ describe("host-owned validation policy", () => {
       await rm(path.join(workspace, "package-lock.json"));
       await writeFile(path.join(workspace, "package-lock.json"), "{}");
       await expect(validationPolicy(workspace, "lukasijus/lukasrimkus_me")).resolves.toMatchObject({
-        manager: "npm", packageManager: "npm@11.11.1", checks: ["typecheck", "build"],
+        projects: [{ manager: "npm", dir: "", packageManager: "npm@11.11.1", checks: ["typecheck", "build"] }],
       });
       await writeFile(path.join(workspace, "package.json"), JSON.stringify({ packageManager: "npm@99.0.0" }));
       await expect(validationPolicy(workspace, "lukasijus/lukasrimkus_me")).rejects.toThrow("npm@11.11.1");
       await writeFile(path.join(workspace, "package.json"), JSON.stringify({ packageManager: "pnpm@11.0.0", scripts: { test: "vitest" } }));
       await expect(validationPolicy(workspace, "lukasijus/calify")).resolves.toMatchObject({
-        manager: "pnpm", checks: ["lint", "test", "build"],
+        projects: [{ manager: "pnpm", checks: ["lint", "test", "build"] }],
       });
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -71,5 +71,80 @@ describe("host-owned validation policy", () => {
     expect(args.slice(-5)).toEqual(["--", "/opt/lrai-agent/bin/npm", "--ignore-scripts", "run", "build"]);
     expect(args).not.toContain("--share-net");
     expect(args).toContain("--clearenv");
+  });
+});
+
+describe("IQPractice multi-project policy", () => {
+  async function iqpractice(): Promise<string> {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "validation-iq-"));
+    for (const app of ["apps/web", "apps/mobile"]) {
+      await mkdir(path.join(workspace, app), { recursive: true });
+      await writeFile(path.join(workspace, app, "package.json"), JSON.stringify({ scripts: {} }));
+      await writeFile(path.join(workspace, app, "package-lock.json"), "{}");
+    }
+    await mkdir(path.join(workspace, "tests/IQPractice.Domain.Tests"), { recursive: true });
+    await writeFile(path.join(workspace, "IQPractice.slnx"), "<Solution />");
+    await writeFile(path.join(workspace, "tests/IQPractice.Domain.Tests/IQPractice.Domain.Tests.csproj"), "<Project />");
+    return workspace;
+  }
+
+  it("validates both npm apps and the .NET solution without a root package.json", async () => {
+    const workspace = await iqpractice();
+    try {
+      const policy = await validationPolicy(workspace, "lukasijus/IQPractice");
+      expect(policy.projects).toMatchObject([
+        { kind: "node", manager: "npm", dir: "apps/web", checks: ["lint", "format:check", "test", "build"] },
+        { kind: "node", manager: "npm", dir: "apps/mobile", checks: ["typecheck", "lint", "format:check", "test"] },
+        { kind: "dotnet", dir: "", packageManager: "dotnet@10.0.403", solution: "IQPractice.slnx",
+          tests: ["tests/IQPractice.Domain.Tests/IQPractice.Domain.Tests.csproj"] },
+      ]);
+      // The same tree under another identity still needs the default pnpm policy.
+      await expect(validationPolicy(workspace, "someone/IQPractice")).rejects.toThrow("package.json");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses symlinked app directories and missing lockfiles or solutions", async () => {
+    const workspace = await iqpractice();
+    try {
+      await rm(path.join(workspace, "apps/mobile/package-lock.json"));
+      await expect(validationPolicy(workspace, "lukasijus/IQPractice")).rejects.toThrow("apps/mobile/package-lock.json");
+      await rm(path.join(workspace, "apps/mobile"), { recursive: true });
+      await symlink("web", path.join(workspace, "apps/mobile"));
+      await expect(validationPolicy(workspace, "lukasijus/IQPractice")).rejects.toThrow("regular directory at apps/mobile");
+      await rm(path.join(workspace, "apps/mobile"));
+      await mkdir(path.join(workspace, "apps/mobile"));
+      await writeFile(path.join(workspace, "apps/mobile/package.json"), "{}");
+      await writeFile(path.join(workspace, "apps/mobile/package-lock.json"), "{}");
+      await rm(path.join(workspace, "IQPractice.slnx"));
+      await expect(validationPolicy(workspace, "lukasijus/IQPractice")).rejects.toThrow("IQPractice.slnx");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("runs dotnet from the host toolchain with a task-local package cache", () => {
+    const args = sandboxArgs("/tmp/repo", "/opt/lrai-agent", false, ["build", "IQPractice.slnx"], "dotnet");
+    expect(args.slice(-4)).toEqual(["--", "/opt/lrai-agent/bin/dotnet", "build", "IQPractice.slnx"]);
+    const env = (name: string) => args[args.indexOf(name) + 1];
+    expect(env("DOTNET_ROOT")).toBe("/opt/lrai-agent/dotnet");
+    expect(env("NUGET_PACKAGES")).toBe(path.join("/tmp/repo", NUGET_DIRECTORY));
+    expect(env("DOTNET_CLI_TELEMETRY_OPTOUT")).toBe("1");
+    // A synthetic one-line passwd, never the host's /etc.
+    expect(args.slice(args.indexOf("/etc/passwd") - 2, args.indexOf("/etc/passwd") + 1))
+      .toEqual(["--ro-bind", path.join("/tmp/repo", PASSWD_FILE), "/etc/passwd"]);
+    expect(args).not.toContain("/etc");
+    expect(args).toContain("--clearenv");
+    expect(args).not.toContain("--share-net");
+    expect(args).not.toContain("/home/luke");
+  });
+
+  it("runs app checks from their directory without widening the mounted workspace", () => {
+    const args = sandboxArgs("/tmp/repo", "/opt/lrai-agent", false, ["run", "lint"], "npm", "/tmp/repo/apps/web");
+    expect(args.slice(args.indexOf("--bind"), args.indexOf("--bind") + 5))
+      .toEqual(["--bind", "/tmp/repo", "/tmp/repo", "--chdir", "/tmp/repo/apps/web"]);
+    expect(args).not.toContain("DOTNET_ROOT");
+    expect(args).not.toContain("/etc/passwd");
   });
 });
