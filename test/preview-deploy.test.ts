@@ -43,7 +43,7 @@ if [[ "$1" == inspect ]]; then
 elif [[ "$1" == build ]]; then
   touch "$TEST_ROOT/built"
 elif [[ "$1" == exec && "$*" == *"cat /usr/share/nginx/html/index.html"* ]]; then
-  echo '<script src="/lukasrimkusme-pr-3/assets/index.js"></script>'
+  echo "<script src=\"\${TEST_ASSET_ROUTE:-/lukasrimkusme-pr-3}/assets/index.js\"></script>"
 elif [[ "$1" == exec && "$*" == *required-server-files.json* ]]; then
   echo "\${TEST_BASE_PATH:-/calify-pr-3}"
 elif [[ "$1" == exec && "$*" == *"cat /etc/nginx/previews.conf"* ]]; then
@@ -81,6 +81,25 @@ describe("Jetson preview deployer", () => {
     const route = await readFile(path.join(root, "previews/gateway/routes/lukasrimkusme-pr-3.conf"), "utf8");
     expect(route).toContain("return 308 /lukasrimkusme-pr-3/;");
     expect(route).toContain("proxy_pass http://lukasrimkusme-pr-3:80/;");
+  });
+
+  it("builds the IQPractice web app against the host-owned dev API and strips the preview path", async () => {
+    env.TEST_ASSET_ROUTE = "/iqpractice-pr-3";
+    const result = await deploy(sha, context, "lukasijus/IQPractice", "iqpractice");
+    expect(JSON.parse(result.stdout)).toEqual({ status: "deployed", url: "https://jetson.tail68fd31.ts.net/iqpractice-pr-3" });
+    const calls = await readFile(path.join(root, "calls"), "utf8");
+    expect(calls).toContain("VITE_BASE_PATH=/iqpractice-pr-3/");
+    expect(calls).toContain("VITE_API_BASE_URL=https://jetson.tail68fd31.ts.net:5443");
+    expect(calls).toMatch(/-f \S+\/apps\/web\/Dockerfile/);
+    expect(calls).toContain("--network jetson-app-gateway_default --memory 128m --security-opt no-new-privileges");
+    expect(calls).not.toContain(".preview-compose.yaml");
+    const route = await readFile(path.join(root, "previews/gateway/routes/iqpractice-pr-3.conf"), "utf8");
+    expect(route).toContain("return 308 /iqpractice-pr-3/;");
+    expect(route).toContain("proxy_pass http://iqpractice-pr-3:80/;");
+  });
+
+  it("refuses an IQPractice build whose assets are not under the preview path", async () => {
+    await expect(deploy(sha, context, "lukasijus/IQPractice", "iqpractice")).rejects.toMatchObject({ stderr: expect.stringContaining("Preview basePath mismatch") });
   });
 
   it("deploys the camera monitor as a hardened relay of the live Pi, never its hardware", async () => {

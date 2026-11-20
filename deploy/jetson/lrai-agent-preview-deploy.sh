@@ -31,7 +31,7 @@ while (($# > 0)); do
 done
 
 case "$repository:$app" in
-  lukasijus/calify:calify|lukasijus/lukasrimkus_me:lukasrimkusme|lukasijus/alwayslike-pi:alwayslike-pi) ;;
+  lukasijus/calify:calify|lukasijus/lukasrimkus_me:lukasrimkusme|lukasijus/alwayslike-pi:alwayslike-pi|lukasijus/IQPractice:iqpractice) ;;
   *) echo "preview repository/app pair is not allowlisted" >&2; exit 1 ;;
 esac
 [[ "$pull_request" =~ ^[1-9][0-9]*$ ]] || { echo "invalid pull request number" >&2; exit 1; }
@@ -97,15 +97,23 @@ GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" git clone --quiet --branch "$ref" -
 actual_sha=$(git -C "$staging" rev-parse HEAD)
 [[ "$actual_sha" == "$sha" ]] || { echo "checked-out ref does not match requested commit" >&2; exit 1; }
 
-if [[ "$app" == "lukasrimkusme" ]]; then
+if [[ "$app" == "lukasrimkusme" || "$app" == "iqpractice" ]]; then
   # Use a fixed runtime contract, never repository Compose (host mounts,
   # privileges and Docker sockets must not come from a task checkout).
-  docker build --build-arg "VITE_BASE_PATH=$route/" -t "lrai-preview-$project:$sha" "$staging" >"$compose_log" 2>&1 || { tail -n 40 "$compose_log" >&2; exit 1; }
+  build_args=(--build-arg "VITE_BASE_PATH=$route/")
+  run_args=()
+  if [[ "$app" == "iqpractice" ]]; then
+    # Static web build (apps/web) against the dev API on the Jetson, whose CORS
+    # already allows the gateway origin. The API URL is host-owned, never the PR's.
+    build_args+=(--build-arg "VITE_API_BASE_URL=https://jetson.tail68fd31.ts.net:5443" -f "$staging/apps/web/Dockerfile")
+    run_args=(--memory 128m --security-opt no-new-privileges)
+  fi
+  docker build "${build_args[@]}" -t "lrai-preview-$project:$sha" "$staging" >"$compose_log" 2>&1 || { tail -n 40 "$compose_log" >&2; exit 1; }
   if docker inspect "$container" >/dev/null 2>&1; then
     docker rm -f "$container" >>"$compose_log" 2>&1
   fi
   docker run -d --name "$container" --restart unless-stopped \
-    --network jetson-app-gateway_default \
+    --network jetson-app-gateway_default "${run_args[@]}" \
     --label "com.lrai-agent.preview.repository=$repository" \
     --label "com.lrai-agent.preview.pull-request=$pull_request" \
     --label "com.lrai-agent.preview.sha=$sha" \
@@ -184,7 +192,7 @@ route_dir="$preview_root/gateway/routes"
 route_file="$route_dir/$project.conf"
 routes_file="$preview_root/gateway/previews.conf"
 mkdir -p "$route_dir"
-if [[ "$app" == "lukasrimkusme" ]]; then
+if [[ "$app" == "lukasrimkusme" || "$app" == "iqpractice" ]]; then
   cat >"$route_file" <<NGINX
 location = $route {
   return 308 $route/;
