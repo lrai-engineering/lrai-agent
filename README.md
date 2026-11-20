@@ -271,6 +271,31 @@ with scripts disabled, followed by a clean frozen install. The required
 Other repositories retain the pinned pnpm policy. Repository names inside
 package.json and repository configuration cannot select this exception.
 
+### IQPractice multi-project validation policy
+
+`lukasijus/IQPractice` has no root package.json: it is a .NET API plus two npm
+apps. Its host-owned policy validates three projects in order, each from its
+own directory with the whole checkout still the only writable mount:
+
+| Project | Preparation (network) | Offline checks |
+|---|---|---|
+| `apps/web` (npm 11.11.1) | `npm ci --ignore-scripts` | `lint`, `format:check`, `test`, `build` |
+| `apps/mobile` (npm 11.11.1) | `npm ci --ignore-scripts` | `typecheck`, `lint`, `format:check`, `test` |
+| `IQPractice.slnx` (.NET SDK 10.0.403) | `dotnet restore` | `dotnet build --no-restore`, `dotnet format --verify-no-changes`, `dotnet test` of `IQPractice.Domain.Tests` |
+
+App directories and the solution must be regular files/directories (no
+symlinks). The API integration tests need Docker (Testcontainers) and are not
+run. NuGet packages go to `.git/lrai-nuget` inside the task checkout, so they
+persist between sandbox steps, are never staged, and are removed with the
+workspace. The .NET sandbox also receives a one-line synthetic `/etc/passwd`
+(the SDK hangs looking up the current user without one); the host's `/etc` is
+still not mounted.
+
+The SDK is installed under the worker toolchain as `/opt/lrai-agent/dotnet`
+with `/opt/lrai-agent/bin/dotnet` linking to it. Install or replace it with
+`sudo bash deploy/jetson/install-dotnet-toolchain.sh [SDK_DIR]` (default
+`~/.dotnet` of the invoking user); the worker refuses any other SDK version.
+
 ### Site PR previews
 
 The host worker maps `lukasijus/lukasrimkus_me` to app `lukasrimkusme` when
