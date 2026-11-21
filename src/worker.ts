@@ -162,12 +162,19 @@ async function findLatestAgentPullRequest(token: string, repository: string, iss
   return pullRequest;
 }
 
+const HOST_PREVIEW_APPS: Readonly<Record<string, string>> = {
+  "lukasijus/lukasrimkus_me": "lukasrimkusme",
+  "lukasijus/IQPractice": "iqpractice",
+};
+
 export async function deployPreview(token: string, repository: string, app: string | undefined, pullRequest: PullRequestSummary, contextSha: string): Promise<PreviewResult> {
-  // Host-owned mapping for the existing npm site, including PRs created before
-  // preview configuration existed. Other repositories still require config.
-  if (repository === "lukasijus/lukasrimkus_me") {
-    if (app !== undefined && app !== "lukasrimkusme") throw new Error("preview.app does not match the site deployment policy");
-    app = "lukasrimkusme";
+  // Host-owned mappings (the personal site and the IQPractice web app), so PRs
+  // created before any preview configuration still deploy. Other repositories
+  // still require config.
+  const hostApp = HOST_PREVIEW_APPS[repository];
+  if (hostApp !== undefined) {
+    if (app !== undefined && app !== hostApp) throw new Error("preview.app does not match the host deployment policy");
+    app = hostApp;
   }
   if (app === undefined) throw new Error("preview.app is required for deploy tasks");
   const command = process.env.LRAI_PREVIEW_DEPLOY_COMMAND === undefined

@@ -103,6 +103,12 @@ describe("preview worker", () => {
     expect(calls.at(-1)?.args).toContain("lukasrimkusme");
   });
 
+  it("uses the host-owned IQPractice web mapping without repository preview config", async () => {
+    await deployPreview("test-token", "lukasijus/IQPractice", undefined, pr, "b".repeat(64));
+    expect(calls.at(-1)?.args).toContain("iqpractice");
+    await expect(deployPreview("test-token", "lukasijus/IQPractice", "calify", pr, "b".repeat(64))).rejects.toThrow("does not match");
+  });
+
   it("rejects a conflicting site app and does not infer apps for other repositories", async () => {
     await expect(deployPreview("test-token", "lukasijus/lukasrimkus_me", "calify", pr, "b".repeat(64))).rejects.toThrow("does not match");
     await expect(deployPreview("test-token", "someone/other", undefined, pr, "b".repeat(64))).rejects.toThrow("preview.app is required");

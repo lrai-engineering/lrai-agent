@@ -300,12 +300,25 @@ with `/opt/lrai-agent/bin/dotnet` linking to it. Install or replace it with
 
 The host worker maps `lukasijus/lukasrimkus_me` to app `lukasrimkusme` when
 `preview.app` is absent; conflicting configuration is rejected. The installed
-preview deployer allows only the explicit Calify, personal-site and camera-monitor
-repository/app pairs. Site PRs build with `VITE_BASE_PATH=/lukasrimkusme-pr-N/` and run on the
+preview deployer allows only the explicit Calify, personal-site, camera-monitor
+and IQPractice repository/app pairs. Site PRs build with `VITE_BASE_PATH=/lukasrimkusme-pr-N/` and run on the
 gateway network with no published ports or host mounts. Repository Compose files
 are not used for site previews. The gateway strips the preview prefix, while the
 site build supplies prefixed asset and navigation URLs. Exact SHA/context reuse
 and local plus Tailscale health checks also apply to the site.
+
+### IQPractice web PR previews
+
+The host worker maps `lukasijus/IQPractice` to app `iqpractice` (no repository
+config needed; a conflicting `preview.app` is rejected). The deployer builds
+`apps/web/Dockerfile` from the repository root with
+`VITE_BASE_PATH=/iqpractice-pr-N/` and the host-owned
+`VITE_API_BASE_URL=https://jetson.tail68fd31.ts.net:5443` (the Jetson dev API,
+whose CORS already allows the gateway origin). It runs the static nginx image
+on the gateway network with no published ports or host mounts, a 128 MiB limit
+and `no-new-privileges`. As with the site, the gateway strips the preview prefix
+and the deployer refuses a build whose assets are not under it. Only the web app
+is previewed; API and mobile changes in a PR are not deployed.
 
 ### Camera monitor PR previews
 
